@@ -10,4 +10,4 @@ NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSo
 §
 用户小说《代码深处的体温》（原《跨越维度的深情》），番茄小说网连载，作者恰逢787。已发3章：你好，露丝（第3章）。100章大纲+人物档案在/root/novel/。标题不加"第X章"，发时勾选AI标记。各章约2000字。
 §
-Hermes Agent persistent memory (MEMORY.md + USER.md) auto-synced to GitHub repo SunFengXin666/Hermes-memory every 30 min via cron job. Local clone at /root/hermes-memory-backup/, sync script at /root/hermes-memory-backup/sync.sh. Remote URL has token embedded for auth.
+Hermes Agent memory (MEMORY.md + USER.md) + all skills SKILL.md auto-synced to GitHub SunFengXin666/Hermes-memory every 30 min via cron. Local clone at /root/hermes-memory-backup/, sync.sh does copy + git push. Skills stored under skills/ dir in repo.
