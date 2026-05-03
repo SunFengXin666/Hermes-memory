@@ -648,6 +648,27 @@ document.getElementById('chat-send').disabled = false;
 - **401 authentication error**: The API key is wrong or truncated. For Hermes API server, use the API_SERVER_KEY from `.env` file, not the LLM provider key.
 - **Messages appear doubled**: Remove the local `appendMessage()` call in `sendMessage()` — server now echoes the user message back.
 - **Input disabled / can't type**: After auto-login, explicitly set `document.getElementById('chat-input').disabled = false` and `chat-send.disabled = false`.
+- **"Failed to execute 'send' on 'WebSocket': Still in CONNECTING"**: This happens when the user types and sends before the WebSocket connects. Two fixes:
+  1. **Guard in sendMessage()**: Check `ws.readyState` before sending:
+     ```javascript
+     function sendMessage() {
+       if (!text) return;
+       if (!ws || ws.readyState !== WebSocket.OPEN) {
+         toast('Connecting...');
+         return;
+       }
+       ws.send(JSON.stringify(payload));
+     }
+     ```
+  2. **Enable input in ws.onopen, not on load**: Move input enablement from the auto-login IIFE to `ws.onopen`. This prevents typing before WS is ready:
+     ```javascript
+     ws.onopen = () => {
+       ws.send(JSON.stringify({type:'login', user_id: userId}));
+       document.getElementById('chat-input').disabled = false;
+       document.getElementById('chat-send').disabled = false;
+     };
+     ```
+    Without this, `ws.send()` throws while still CONNECTING, showing an error banner in the WebView.
 
 ### Read-File Escape-Drift Trap
 
