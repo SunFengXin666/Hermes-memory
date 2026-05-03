@@ -1,0 +1,384 @@
+---
+name: android-webview-apk
+description: "Build an Android APK that wraps a web app (Flask/React/any web UI) in a WebView, compiled on a headless Linux server without Android Studio. Covers setting up JDK + Android SDK + Gradle behind GFW/proxy, project structure, and common build pitfalls."
+version: 1.0.0
+author: Hermes Agent
+tags: [android, apk, webview, gradle, sdk, mobile, china-server, proxy]
+---
+
+# Android WebView APK Builder
+
+Build a native Android APK that opens a web app (Flask/any HTTP backend) inside a WebView. Designed for servers in mainland China where Docker pull and apt/dnf are unreliable — uses direct downloads via proxy.
+
+## When to Use
+
+- User wants a native Android APK from a web app (no PWA or browser URL)
+- You're on a headless Linux server (no Android Studio, no GUI)
+- Server is behind GFW / has restricted Docker/package-manager access
+- The target app is a Flask/FastAPI/any HTTP web app that should appear as a standalone Android app
+
+## Overview
+
+```
+┌────────────────────────────┐
+│  Android APK (WebView)     │
+│  ┌──────────────────────┐  │
+│  │  WebView loads URL   │  │
+│  │  http://server:port  │  │
+│  │                      │  │
+│  │  Your Flask/Web App  │  │
+│  └──────────────────────┘  │
+└────────────────────────────┘
+```
+
+## Setup & Build Steps
+
+### 1. Install JDK (Adoptium Temurin)
+
+```bash
+export https_proxy=http://127.0.0.1:7890
+curl -sL -o /tmp/jdk.tar.gz \
+  'https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.9%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.9_9.tar.gz'
+mkdir -p /opt/java
+tar xzf /tmp/jdk.tar.gz -C /opt/java
+export JAVA_HOME=/opt/java/jdk-17.0.9+9
+export PATH=$JAVA_HOME/bin:$PATH
+java -version
+```
+
+### 2. Install Android SDK Command-Line Tools
+
+```bash
+export https_proxy=http://127.0.0.1:7890
+curl -sL -o /tmp/cmdline-tools.zip \
+  'https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip'
+mkdir -p /opt/android-sdk/cmdline-tools
+unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-tmp
+mkdir -p /opt/android-sdk/cmdline-tools/latest
+mv /tmp/cmdline-tools-tmp/cmdline-tools/* /opt/android-sdk/cmdline-tools/latest/
+rm -rf /tmp/cmdline-tools-tmp /tmp/cmdline-tools.zip
+
+export ANDROID_HOME=/opt/android-sdk
+export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+
+# Accept licenses and install platform + build tools
+yes | sdkmanager --sdk_root=$ANDROID_HOME \
+  "platforms;android-34" \
+  "build-tools;34.0.0"
+```
+
+### 3. Install Gradle
+
+```bash
+export https_proxy=http://127.0.0.1:7890
+curl -sL -o /tmp/gradle.zip \
+  'https://services.gradle.org/distributions/gradle-8.5-bin.zip'
+mkdir -p /opt/gradle
+unzip -q /tmp/gradle.zip -d /opt/gradle
+export GRADLE_HOME=/opt/gradle/gradle-8.5
+export PATH=$GRADLE_HOME/bin:$PATH
+```
+
+### 4. Create Android Project Structure
+
+```
+my-android-app/
+├── build.gradle              # Root Gradle (Groovy DSL)
+├── settings.gradle.kts       # Settings
+├── gradle.properties         # android.useAndroidX=true
+├── local.properties          # sdk.dir=/opt/android-sdk
+├── app/
+│   ├── build.gradle          # App module
+│   ├── proguard-rules.pro
+│   └── src/main/
+│       ├── AndroidManifest.xml
+│       ├── java/com/myapp/MainActivity.java
+│       └── res/
+│           ├── layout/activity_main.xml
+│           ├── values/{strings,themes}.xml
+│           ├── xml/network_security_config.xml
+│           └── mipmap-*/ic_launcher.png
+```
+
+### 5. Key Files Content
+
+**build.gradle** (root — Groovy DSL):
+```groovy
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.0'
+    }
+}
+```
+
+**settings.gradle.kts**:
+```kotlin
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = "MyApp"
+include(":app")
+```
+
+**gradle.properties**:
+```
+android.useAndroidX=true
+org.gradle.jvmargs=-Xmx512m
+```
+
+**local.properties**:
+```
+sdk.dir=/opt/android-sdk
+```
+
+**app/build.gradle**:
+```groovy
+apply plugin: 'com.android.application'
+android {
+    namespace 'com.myapp.app'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.myapp.app'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+}
+```
+
+**AndroidManifest.xml**:
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@style/Theme.MyApp"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name">
+
+        <activity android:name=".MainActivity" android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+```
+
+**MainActivity.java** (WebView wrapper):
+```java
+package com.myapp.app;
+
+import android.os.Bundle;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
+
+public class MainActivity extends AppCompatActivity {
+    private WebView webView;
+    private SwipeRefreshLayout swipeRefresh;
+    private String serverUrl;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        serverUrl = getIntent().getStringExtra("server_url");
+        if (serverUrl == null || serverUrl.isEmpty()) {
+            serverUrl = "http://YOUR_SERVER_IP:PORT";  // ← CHANGE THIS
+        }
+
+        swipeRefresh = findViewById(R.id.swipe_refresh);
+        webView = findViewById(R.id.webview);
+
+        WebSettings s = webView.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setLoadWithOverviewMode(true);
+        s.setUseWideViewPort(true);
+        s.setBuiltInZoomControls(true);
+        s.setDisplayZoomControls(false);
+        s.setUserAgentString(s.getUserAgentString() + " MyApp-Android/1.0");
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                swipeRefresh.setRefreshing(false);
+            }
+        });
+        webView.setWebChromeClient(new WebChromeClient());
+        swipeRefresh.setOnRefreshListener(() -> webView.reload());
+        webView.loadUrl(serverUrl);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (webView.canGoBack()) { webView.goBack(); }
+        else { super.onBackPressed(); }
+    }
+}
+```
+
+**activity_main.xml** (layout):
+```xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipe_refresh"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+        <WebView android:id="@+id/webview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+</LinearLayout>
+```
+
+**res/xml/network_security_config.xml**:
+```xml
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+```
+
+**res/values/themes.xml**:
+```xml
+<resources>
+    <style name="Theme.MyApp" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#5865F2</item>
+        <item name="android:windowBackground">#2B2D31</item>
+    </style>
+</resources>
+```
+
+**res/values/strings.xml**:
+```xml
+<resources>
+    <string name="app_name">My App</string>
+</resources>
+```
+
+**app/proguard-rules.pro**:
+```
+-keepattributes *Annotation*
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+```
+
+### 6. Generate Launcher Icons
+
+Use Python Pillow to create PNG icons at Android density sizes:
+
+```python
+from PIL import Image
+src = Image.open('source-512.png')
+sizes = {'mipmap-hdpi':48, 'mipmap-mdpi':48, 'mipmap-xhdpi':96,
+         'mipmap-xxhdpi':144, 'mipmap-xxxhdpi':192}
+for d, s in sizes.items():
+    img = src.resize((s, s), Image.LANCZOS)
+    img.save(f'app/src/main/res/{d}/ic_launcher.png')
+```
+
+### 7. Build the APK
+
+```bash
+export JAVA_HOME=/opt/java/jdk-17.0.9+9
+export ANDROID_HOME=/opt/android-sdk
+export GRADLE_HOME=/opt/gradle/gradle-8.5
+export PATH=$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+
+cd /root/my-android-app
+$GRADLE_HOME/bin/gradle assembleDebug --no-daemon
+# APK at: app/build/outputs/apk/debug/app-debug.apk
+```
+
+### 8. Send APK to User (via QQ Bot)
+
+```bash
+# Copy into NapCat container if needed
+docker cp /path/to/app-debug.apk napcatf:/root/myapp.apk
+
+# Send via NapCat WebSocket API
+node -e "
+const WebSocket = require('ws');
+const ws = new WebSocket('ws://127.0.0.1:3001');
+ws.on('open', () => {
+  ws.send(JSON.stringify({
+    action: 'send_private_msg',
+    params: {
+      user_id: USERS_QQ_NUMBER,
+      message: [
+        { type: 'text', data: { text: 'Your APK is ready' } },
+        { type: 'file', data: { file: '/root/myapp.apk' } }
+      ]
+    },
+    echo: 'send'
+  }));
+});
+ws.on('message', (d) => { console.log(d.toString()); ws.close(); });
+setTimeout(() => process.exit(0), 8000);
+"
+```
+
+## Pitfalls
+
+1. **docker pull fails on Chinese servers** — Docker Hub is frequently blocked. Don't rely on Docker-based Android build images. Download JDK/Gradle/SDK directly via proxy (mihomo/clash).
+2. **android.useAndroidX=true** — Must be in `gradle.properties`. Without it, `checkDebugAarMetadata` fails with a cryptic error about AndroidX dependencies.
+3. **Repositories mode conflict** — If `settings.gradle.kts` has `FAIL_ON_PROJECT_REPOS`, don't declare `allprojects { repositories {} }` in `build.gradle`. Keep repos only in settings.
+4. **ProGuard rules file** — Must exist (even if empty) if `proguardFiles` is referenced in `build.gradle`.
+5. **icon missing** — `@mipmap/ic_launcher` references must exist as PNGs in each `mipmap-*` folder. Missing icons cause an invisible build failure.
+6. **Cleartext traffic** — Android 9+ blocks HTTP by default. Set `android:usesCleartextTraffic="true"` in manifest AND provide `network_security_config.xml`.
+7. **Gradle daemon conflict** — Kill old daemons (`pkill -f GradleDaemon`) before restarting a failed build. Stale daemons hold port locks.
+8. **Maven/Google proxy** — Gradle needs to reach `dl.google.com` and `repo1.maven.org`. If proxy is required, set `GRADLE_OPTS` with `-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890` or configure in `gradle.properties`.
+
+## Verification
+
+```bash
+# Check APK exists and size
+ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+# Verify APK signature
+/opt/android-sdk/build-tools/34.0.0/apksigner verify \
+  app/build/outputs/apk/debug/app-debug.apk
+
+# Check manifest contents
+/opt/android-sdk/build-tools/34.0.0/aapt dump badging \
+  app/build/outputs/apk/debug/app-debug.apk | head -20
+```
