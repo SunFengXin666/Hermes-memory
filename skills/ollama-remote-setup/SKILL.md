@@ -137,6 +137,82 @@ print(result.get('response', ''))
 ssh.close()
 ```
 
+## 8. Connect Remote Ollama to Local Hermes Agent
+
+After Ollama is running on the remote server, configure Hermes Agent (running locally) to use it as an LLM provider.
+
+### 8a. Open Remote Server's Firewall
+
+The remote server's security group / cloud firewall must allow inbound traffic on port **11434**:
+
+- **Tencent Cloud / Alibaba Cloud / AWS / GCP**: Go to the cloud console → Security Group → Add inbound rule:
+  - Protocol: TCP
+  - Port: 11434
+  - Source: `0.0.0.0/0` (or your local server's IP for security)
+- **UFW (Ubuntu)**: `sudo ufw allow 11434/tcp`
+- **firewalld (CentOS/RHEL)**: `sudo firewall-cmd --add-port=11434/tcp --permanent && sudo firewall-cmd --reload`
+
+After opening, verify from the local machine:
+```bash
+curl -s --noproxy '*' --connect-timeout 5 http://<REMOTE_IP>:11434/api/tags
+# Should return: {"models":[...]}
+```
+
+### 8b. Configure Hermes to Use Remote Ollama
+
+Ollama exposes an OpenAI-compatible API, so configure Hermes with the OpenAI provider pointing to the remote Ollama:
+
+```bash
+hermes config set model.provider openai
+hermes config set model.base_url http://<REMOTE_IP>:11434/v1
+hermes config set model.api_key ollama
+```
+
+Or edit `~/.hermes/config.yaml` directly:
+```yaml
+model:
+  default: qwen2.5:0.5b
+  provider: custom
+  base_url: http://<REMOTE_IP>:11434/v1
+  api_key: ""    # Ollama doesn't require auth
+```
+
+**Note:** Some Hermes providers may not recognize `api_key: ""` as valid. If so, set `api_key: "ollama"` (the value doesn't matter).
+
+### 8c. Alternative: SSH Tunnel (No Firewall Change Needed)
+
+If you can't or don't want to open the security group, use SSH port forwarding:
+
+On your local machine:
+```bash
+ssh -L 11434:127.0.0.1:11434 ubuntu@<REMOTE_IP> -N
+```
+
+Then configure Hermes to connect via localhost:
+```bash
+hermes config set model.base_url http://127.0.0.1:11434/v1
+```
+
+The SSH tunnel encrypts all traffic and bypasses cloud security groups entirely. For persistent tunnels, use `autossh` or systemd.
+
+### 8d. Test the Connection
+
+From Hermes, run a quick test:
+```bash
+hermes chat -q "用中文回答：你好，你是谁？"
+```
+
+Or verify the API endpoint directly:
+```bash
+curl -s http://<REMOTE_IP_OR_LOCALHOST>:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2.5:0.5b",
+    "messages": [{"role": "user", "content": "你好"}],
+    "stream": false
+  }' 2>&1 | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('choices',[{}])[0].get('message',{}).get('content','ERROR'))"
+```
+
 ## Pitfalls
 
 1. **`ollama run` over SSH** — Always use the REST API (`curl http://127.0.0.1:11434/api/generate`) instead of `ollama run` which is TTY-based.
