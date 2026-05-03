@@ -2,7 +2,7 @@ Hermes Agent web management panel deployed at /root/hermes-webui/app.py. A Flask
 §
 Mihomo proxy at /etc/mihomo/ (systemd mihomo.service). Mixed proxy 127.0.0.1:7890, SOCKS 7891, API 9090. Use export https_proxy=http://127.0.0.1:7890 for foreign downloads (curl/wget/git). All foreign traffic goes through proxy; domestic sources (aliyun, tencent, pypi mirrors) direct. Subscription from yfssce.net. Geoip/geosite via ghproxy.net mirror.
 §
-Vision model providers: Groq vision models decommissioned (Apr 2026). OpenRouter nvidia/nemotron-nano-12b-v2-vl:free has ~50 daily limit (429 after exhausted). Gemini free tier shows "limit: 0" without GCP billing. Groq blocks Tencent Cloud IPs — use proxy.
+Vision model providers: auxiliary vision switched to Xiaomi MiMo (MiMo-V2.5-Omni) in config. nvidia/nemotron-nano-12b-v2-vl:free on OpenRouter decommissioned. MiMo API key: tp-c05czm1kueef6yqlxczc9hv03zlak7u3hobtnwjxun4tbqxr.
 §
 NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSocket). Also WebSocket at 6099 port (with token). Send-image helper scripts at /opt/napcat/send_image.js (uses NCWebsocket library, target QQ 3240171077, file path /root/qrcode.png). Also /opt/napcat/send.js (native ws). To send QR/image to QQ via NapCat: cp screenshot /root/qrcode.png && cd /opt/napcat && node send_image.js. NapCat Docker container name: napcatf.
 §
@@ -10,4 +10,4 @@ NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSo
 §
 用户小说《代码深处的体温》（原《跨越维度的深情》），番茄小说网连载，作者恰逢787。已发3章：你好，露丝（第3章）。100章大纲+人物档案在/root/novel/。标题不加"第X章"，发时勾选AI标记。各章约2000字。
 §
-Hermes Agent memory (MEMORY.md + USER.md) + all skills SKILL.md auto-synced to GitHub SunFengXin666/Hermes-memory every 30 min via cron. Local clone at /root/hermes-memory-backup/, sync.sh does copy + git push. Skills stored under skills/ dir in repo.
+GitHub auto-sync (SunFengXin666/Hermes-memory, via on_session_end plugin): local clone at /root/hermes-memory-backup/, sync.sh copies MEMORY.md + USER.md + 4 core system files (AGENTS.md, README.md, CONTRIBUTING.md, SOUL.md) + all skills/ SKILL.md, then git add+commit+push. No cron — syncs after each conversation ends. Plugin: github-sync, file at ~/.hermes/hermes-agent/plugins/github-sync/.

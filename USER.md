@@ -9,3 +9,7 @@ User wants image analysis/vision capability. Gemini API keys had quota exhausted
 用户QQ号：3240171077。可通过NapCat QQ Bot发消息到该QQ（ws://127.0.0.1:3001，send_private_msg）。
 §
 QQ用户，番茄作家网(fanqienovel.com)作者，手机号15601447368。需登录后台管理章节。
+§
+用户想要多 agent 编排——我拆任务，派专门职责的子 agent（图像/代码/测试等），我汇总。图像 agent 流程：收到图→spawn只带vision+file的子agent分析→结果给我处理。我是总控角色。
+§
+When reporting vision model analysis, flag uncertain descriptions as guesses — don't state "possibly/maybe" items as facts. User will correct if wrong.

@@ -1,6 +1,6 @@
 ---
 name: github-auto-sync
-description: "Set up automatic git commit+push sync of local files to a GitHub repository — via cron or inotify. Handles Chinese server proxy, credential persistence, and deduplicating identical commits."
+description: "Set up automatic git commit+push sync of local files to a GitHub repository — via cron or Hermes Plugin (on_session_end). Handles Chinese server proxy, credential persistence, deduplicating identical commits, and expanding scope to include Hermes Agent system files (AGENTS.md, README.md, CONTRIBUTING.md, SOUL.md) alongside user memory files."
 version: 1.0.0
 author: Hermes Agent
 license: MIT
@@ -18,9 +18,14 @@ Set up automatic git commit+push of specific local files to a GitHub repository.
 
 A user wants to:
 - "Auto-sync my Hermes memory to GitHub"
+- "Sync Hermes Agent core system files (AGENTS.md, SOUL.md) to GitHub"
 - "Automatically backup these config files to a repo"
 - "Set up periodic git push of local notes/changes"
 - "Keep MEMORY.md and USER.md synced to GitHub"
+- "Add more files to an existing auto-sync setup"
+- "Expand what gets synced beyond just memory files"
+- "Sync all my Hermes skills (SKILL.md files) to GitHub automatically"
+- "Back up the skills I've accumulated to a repo so they're never lost"
 
 ## Prerequisites
 
@@ -37,6 +42,14 @@ A user wants to:
 2. **Repository permissions** → **Contents** → "Read and Write"
 
 If you get `remote: Permission to <user>/<repo>.git denied` after cloning, it's almost always because the fine-grained PAT hasn't been authorized for that specific repo.
+
+## Two Sync Trigger Options
+
+You can trigger sync via either:
+- **Option A: Cron** (periodic, e.g. every 5/30 minutes) — see Step 4A below
+- **Option B: Hermes Plugin on_session_end** (syncs after each conversation ends, no polling) — see Step 4B below
+
+**Recommendation:** Use Option B (plugin) for Hermes Agent sync — it's more responsive and avoids unnecessary commits when no conversations happen. Use Option A (cron) if you want fixed-interval sync regardless of agent activity.
 
 ## Setup Flow
 
@@ -86,9 +99,93 @@ git pull origin main --allow-unrelated-histories --no-edit
 git push -u origin main
 ```
 
-### Step 4: Set up auto-sync via cron
+### Step 4B: Auto-sync via Hermes Plugin (on_session_end)
 
-Two approaches:
+Instead of cron, create a Hermes Agent plugin that runs the sync script automatically after every conversation ends.
+
+**Create the plugin directory:**
+
+```bash
+mkdir -p ~/.hermes/hermes-agent/plugins/github-sync
+```
+
+**Create `plugin.yaml`:**
+
+```yaml
+name: github-sync
+version: 1.0.0
+description: "Sync Hermes memory, system files, and skills to GitHub on session end."
+author: "user"
+hooks:
+  - on_session_end
+```
+
+**Create `__init__.py`:**
+
+```python
+\"\"\"github-sync plugin — sync to GitHub on session end.\"\"\"
+
+from __future__ import annotations
+
+import logging
+import subprocess
+import os
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+SYNC_SCRIPT = os.path.expanduser("<SYNC_SCRIPT_PATH>")
+
+
+def _on_session_end(
+    session_id: str = "",
+    completed: bool = True,
+    interrupted: bool = False,
+    **_: Any,
+) -> None:
+    try:
+        result = subprocess.run(
+            ["bash", SYNC_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            logger.info("github-sync: pushed to GitHub successfully")
+        else:
+            logger.warning("github-sync: exit code %d — %s", result.returncode, result.stderr.strip())
+    except subprocess.TimeoutExpired:
+        logger.warning("github-sync: timed out after 120s")
+    except Exception as exc:
+        logger.debug("github-sync: error — %s", exc)
+
+
+def register(ctx) -> None:
+    ctx.register_hook("on_session_end", _on_session_end)
+```
+
+Replace `<SYNC_SCRIPT_PATH>` with the actual path to your sync script (e.g. `/root/hermes-memory-backup/sync.sh`).
+
+**Enable the plugin:**
+
+```bash
+cd ~/.hermes/hermes-agent && source venv/bin/activate
+hermes plugins enable github-sync
+```
+
+The plugin takes effect on the **next session** start. Each conversation end will trigger the sync.
+
+**If migrating from cron to plugin:** Remove the old cron entry:
+
+```bash
+rm /etc/cron.d/hermes-memory-sync   # if using /etc/cron.d/
+# OR
+crontab -e   # and remove the line
+```
+
+### Step 4A: Auto-sync via Cron
+
+Two approaches — **Crontab one-liner** (simpler) or **Standalone script** (more maintainable).
 
 **Option A: Crontab one-liner** (simpler, inline commands)
 
@@ -133,13 +230,26 @@ cd /root/github-sync/hermes-memory
 cp /root/.hermes/memories/MEMORY.md ./MEMORY.md
 cp /root/.hermes/memories/USER.md ./USER.md
 
+# Optional: copy Hermes Agent core system files
+# cp /root/.hermes/hermes-agent/AGENTS.md ./AGENTS.md
+# cp /root/.hermes/hermes-agent/README.md ./README.md
+# cp /root/.hermes/hermes-agent/CONTRIBUTING.md ./CONTRIBUTING.md
+# cp /root/.hermes/SOUL.md ./SOUL.md
+
+# Optional: copy all Hermes skills (SKILL.md files) to skills/ dir
+# for skill_dir in /root/.hermes/skills/*/*/; do
+#     skill_name=$(basename "$skill_dir")
+#     mkdir -p "./skills/$skill_name"
+#     cp "$skill_dir/SKILL.md" "./skills/$skill_name/SKILL.md" 2>/dev/null || true
+# done
+
 # Check if anything changed
 if git diff --quiet; then
     exit 0
 fi
 
 # Commit and push
-git add -A
+git add MEMORY.md USER.md  # add AGENTS.md README.md CONTRIBUTING.md SOUL.md skills/ if syncing system files + skills
 git commit -m "sync: auto-update $(date '+%Y-%m-%d %H:%M')"
 git push
 SCRIPT
