@@ -360,7 +360,7 @@ Full config reference: https://hermes-agent.nousresearch.com/docs/user-guide/con
 | MiniMax CN | API key | `MINIMAX_CN_API_KEY` |
 | Kimi / Moonshot | API key | `KIMI_API_KEY` |
 | Alibaba / DashScope | API key | `DASHSCOPE_API_KEY` |
-| Xiaomi MiMo | API key | `XIAOMI_API_KEY` |
+| Xiaomi MiMo | API key | `XIAOMI_API_KEY` — **Token Plan keys (`tp-`) use `https://token-plan-cn.xiaomimimo.com/v1`, not `api.xiaomimimo.com`** (see image-subagent skill for full troubleshooting) |
 | Kilo Code | API key | `KILOCODE_API_KEY` |
 | AI Gateway (Vercel) | API key | `AI_GATEWAY_API_KEY` |
 | OpenCode Zen | API key | `OPENCODE_ZEN_API_KEY` |
