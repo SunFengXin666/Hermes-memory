@@ -122,7 +122,7 @@ client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 client.connect(host, port=22, username='ubuntu', password='password', timeout=15)
 sftp = client.open_sftp()
 
-# Upload
+# Upload (positional args only!)
 sftp.put('/local/file.txt', '/remote/file.txt')
 # Download
 sftp.get('/remote/file.txt', '/local/file.txt')
@@ -130,6 +130,16 @@ sftp.get('/remote/file.txt', '/local/file.txt')
 sftp.close()
 client.close()
 ```
+
+### ⚠️ `sftp.put()` uses POSITIONAL arguments, NOT keyword arguments
+```python
+# ❌ WRONG — causes TypeError: SFTPClient.put() got an unexpected keyword argument
+sftp.put(local_path=str(local_tmp), remote_path=remote_path)
+
+# ✅ CORRECT — positional only
+sftp.put(str(local_tmp), remote_path)
+```
+Paramiko's `SFTPClient.put(localpath, remotepath)` does not accept keyword argument names `local_path` or `remote_path`. The parameter names in the Python signature are `localpath` and `remotepath` (no underscores), but even those are best passed positionally to avoid confusion. The error message truncates to `'local_p'` which can be misleading.
 
 ### 🔑 CRITICAL: Fresh connection per operation (reliability pattern)
 In unstable network environments (GFW, proxy, long idle times), persistent SSH/SFTP connections get **"Socket is closed"** errors. **Never reuse a long-lived SFTP connection** for file uploads/downloads — always create a fresh connection for each operation.
