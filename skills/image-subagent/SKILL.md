@@ -1,7 +1,7 @@
 ---
 name: image-subagent
 description: "Use when the user sends an image (via QQ/Telegram/Discord/file path) or asks to analyze/extract text from an image. Spawns a dedicated subagent with vision+file tools to analyze the image, then uses the result for further action."
-version: 1.0.0
+version: 1.1.0
 author: user
 license: MIT
 metadata:
@@ -36,7 +36,7 @@ Spawn a dedicated subagent to handle image processing, freeing the main agent to
 | | 内置辅助视觉（自动） | 专用图像 agent（手动） |
 |--|-------------------|---------------------|
 | 触发方式 | 自动，你发图就有 | 需要我主动调用 |
-| 模型 | Hermes 内置（不可控） | **MiMo V2.5-Omni**（独立 key） |
+| 模型 | Hermes 内置（不可控） | **MiMo V2-Omni**（独立 key，Token Plan） |
 | 质量 | 一般，适合粗看 | 高，适合精确识别 |
 | 用途 | 快速判断"这是什么" | OCR、报错截图、细节分析 |
 
@@ -161,15 +161,40 @@ VISION_MODEL=gpt-4o
 - `hermes chat --provider xiaomi` 读的是 `$XIAOMI_API_KEY` 环境变量（来自 `.env` 或 export），**不是** config 里的 auxiliary key
 - 所以如果 `hermes chat --provider xiaomi` 报 401，检查 `.env` 里有没有 `XIAOMI_API_KEY` 或手动 export 环境变量
 
+### ⚠️ MiMo Token Plan vs 标准 API 的区别
+
+MiMo 有 **两套独立 API**，key 不能混用，endpoint 不同：
+
+| | Token Plan（订阅制） | 标准 API（按量付费） |
+|--|-------------------|-------------------|
+| Key 前缀 | `tp-xxxxx` | `sk-xxxxx` |
+| Base URL | `https://token-plan-cn.xiaomimimo.com/v1` | `https://api.xiaomimimo.com/v1` |
+| Auth header | `Authorization: Bearer` 或 `api-key` | `Authorization: Bearer` 或 `api-key` |
+| 可用模型 | `mimo-v2-omni`, `mimo-v2-pro`, `mimo-v2.5`, `mimo-v2.5-pro` | `mimo-v2.5-omni`, `mimo-v2.5-pro`, ... |
+
+**必知：** 如果用 `tp-` 前缀的 Token Plan key 去调 `api.xiaomimimo.com/v1`，必返回 401。必须换成 Token Plan 专用 endpoint。
+
 ### 检查 key 是否有效
+
 ```bash
-# 简单测试
+# Token Plan 测试（tp- 前缀 key）
+curl -s -w "\n%{http_code}" https://token-plan-cn.xiaomimimo.com/v1/chat/completions \
+  -H "Authorization: Bearer tp-xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mimo-v2-omni","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}'
+
+# 标准 API 测试（sk- 前缀 key）
 curl -s -w "\n%{http_code}" https://api.xiaomimimo.com/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Authorization: Bearer sk-xxx" \
   -H "Content-Type: application/json" \
   -d '{"model":"mimo-v2.5-omni","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}'
-# 返回 401 → key 无效，去 platform.xiaomimimo.com 重新生成
 ```
+
+**401 排查流程：**
+1. key 是 `tp-` 还是 `sk-` 开头？
+2. endpoint 是否匹配 key 类型？（`tp-` → `token-plan-cn.*`，`sk-` → `api.*`）
+3. 如果 key 类型和 endpoint 匹配但仍然 401 → 去 https://platform.xiaomimimo.com 后台检查 key 状态、订阅是否过期、余额是否充足
+4. 后台需要登录小米账号，在"控制台→API Keys"查看
 
 ## Tips
 
