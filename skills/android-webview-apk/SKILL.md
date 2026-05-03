@@ -458,6 +458,77 @@ A common user mistake when filling server config: they enter the port of a diffe
         return resp
     ```
 
+### Version Management for Iterative Delivery
+
+When shipping APKs iteratively (user tests → feedback → modify → rebuild → resend):
+
+1. **Bump versionCode and versionName** in `app/build.gradle` on every rebuild:
+   ```groovy
+   defaultConfig {
+       versionCode 2    // increment by 1 each time
+       versionName '1.1.0'  // semantic version
+   }
+   ```
+2. **Name the APK file** with the version to avoid stale file issues: `cp app-debug.apk /shared/myapp-v1.1.apk`
+3. **Changelog in the send message**: Always include a bullet list of what changed so the user knows what to test.
+4. **Server must be restarted** after frontend changes (HTML/CSS/JS). Kill the old process with `fuser -k PORT/tcp` and start fresh in background.
+
+### Adding a Directory Sandbox/Lock to an SFTP File Browser
+
+If your APK wraps a Flask/SFTP file browser app and the user wants to lock navigation to a specific directory (users enter at a base path and cannot navigate above it):
+
+**Frontend (JavaScript) changes:**
+```javascript
+// 1. State: track basePath
+let basePath = '/home/ubuntu/yunpan';
+let currentDiskPath = basePath;
+
+// 2. After connecting, create + navigate into base path
+basePath = '/home/ubuntu/yunpan';
+try { await fetch(`/api/disks/${connId}/mkdir`, {
+  method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({path: basePath})
+}); } catch(_) {}  // mkdir fails if exists, which is fine
+currentDiskPath = basePath;
+document.getElementById('current-path').textContent = basePath + ' 🔒';
+
+// 3. Lock navigation to prevent leaving basePath
+function navigateToDir(path) {
+  if (basePath !== '/' && path !== basePath && !path.startsWith(basePath + '/')) {
+    toast('🔒 不能超出根路径');
+    loadDiskDir(basePath);
+    return;
+  }
+  loadDiskDir(path);
+}
+
+// 4. Update diskGoBack() to stop at basePath
+function diskGoBack() {
+  if (currentDiskPath === '/' || currentDiskPath === basePath) return;
+  const parent = currentDiskPath.split('/').slice(0, -1).join('/') || '/';
+  if (parent === basePath || parent.startsWith(basePath + '/')) {
+    loadDiskDir(parent);
+  } else {
+    loadDiskDir(basePath);  // clamp to basePath
+  }
+}
+
+// 5. Save base_path with server config in localStorage
+const saveEntry = { name, host, port, username, password, base_path: '/home/ubuntu/yunpan' };
+savedServers.push(saveEntry);
+localStorage.setItem('im_servers', JSON.stringify(savedServers));
+```
+
+**Backend (Flask) changes:**
+No backend changes needed — the locking is enforced client-side. The SFTP connection can access any path; the frontend simply refuses to navigate above `basePath`. The `mkdir` endpoint is called to auto-create the directory on first connect.
+
+**When to use this pattern:**
+- The user complains about directory clutter in root `/` and wants a clean workspace
+- The SSH user doesn't have write permission to `/` (E.g., [Errno 13] Permission denied when creating folders in root)
+- The app is shared among multiple users and each should be confined to their own directory
+- You want to prevent accidental navigation into system directories
+
 ## Verification
 
 ```bash
