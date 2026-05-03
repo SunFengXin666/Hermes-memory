@@ -1201,6 +1201,77 @@ async function diskDownload(path) {
 }
 ```
 
+**⚠️ Common failure: stale SFTP connections on mobile networks**
+
+After prolonged inactivity (or interrupted mobile connections), the paramiko SSH/SFTP connection silently closes. The `sftp.listdir()` or `sftp.put()` call raises `Socket is closed` (or `EOFError`). The frontend shows a generic error and the user has to reconnect manually.
+
+**Fix: Auto-reconnect on stale connections**
+
+In every SFTP operation (list, upload, download), catch the connection error and try to reconnect once using saved credentials:
+
+```python
+@app.route('/api/disks/<conn_id>/list', methods=['GET'])
+def disk_list(conn_id):
+    conn = sftp_connections.get(conn_id)
+    if not conn:
+        return jsonify({'ok': False, 'error': '连接已断开'}), 404
+    try:
+        items = conn['sftp'].listdir_attr(path)
+    except Exception as e:
+        # Auto-reconnect on stale connection
+        try:
+            info = conn.get('info', {})
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            pw = info.get('password', '')
+            client.connect(info['host'], port=int(info.get('port', 22)),
+                           username=info['username'], password=pw, timeout=10)
+            sftp = client.open_sftp()
+            conn['client'].close()
+            conn['client'] = client
+            conn['sftp'] = sftp
+            items = sftp.listdir_attr(path)  # retry
+        except Exception:
+            return jsonify({'ok': False, 'error': f'连接断开: {e}'}), 400
+```
+
+Apply the same pattern to the upload endpoint — wrap `sftp.put()` in a try/except that reconnects once.
+
+**⚠️ Duplicate connections bug**
+
+If the user reconnects to the same server (same host/port/username), the Flask backend creates a second paramiko connection, leaving the first one dangling. This causes duplicate entries in the UI and "Socket is closed" errors on the stale connection.
+
+**Fix: Disconnect existing connections on reconnect**
+
+```python
+@app.route('/api/disks/connect', methods=['POST'])
+def disk_connect():
+    # ... parse data ...
+    # Disconnect any existing connection to same server
+    for cid, conn in list(sftp_connections.items()):
+        if (conn['info'].get('host') == host and
+            conn['info'].get('port') == port and
+            conn['info'].get('username') == username):
+            try: conn['sftp'].close()
+            except: pass
+            try: conn['client'].close()
+            except: pass
+            del sftp_connections[cid]
+    # ... create new connection ...
+```
+
+**Sync vs Async SFTP upload: when to use which**
+
+The async pattern (return immediately, push SSE event on completion) is designed for large files over slow connections. But the SSE notification may not arrive if the phone's connection dropped.
+
+| Approach | Latency | Reliability | UX |
+|----------|---------|-------------|----|
+| Async (SSE notify) | Phone returns instantly | SSE may drop | User sees "uploading", must manually refresh |
+| Sync (wait for SFTP) | Blocks until done | Always accurate | User waits but sees definitive success |
+
+**Use sync when:** Files small (<10MB), SFTP on same VPC (fast), SSE unreliable (mobile 4G), user prefers "it's done" certainty.
+**Use async when:** Files large (100MB+), slow SFTP link, stable SSE connection (WiFi).
+
 **Why `<a>` click instead of `window.open` or `fetch` + blob:**
 - `window.open` is blocked by most WebViews (popup blocker)
 - `fetch` + blob + `URL.createObjectURL` loads entire file into memory before saving (bad for large files)
