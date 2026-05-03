@@ -142,6 +142,35 @@ VISION_MODEL=gpt-4o
 看两张截图 → 对比差异 → 报告不同之处
 ```
 
+## 🔑 凭证管理：MiMo 的两种认证途径
+
+当你发图时，Hermes 实际有 **两个独立使用 MiMo 的途径**，各自从不同位置读取 API key：
+
+| 途径 | 触发方式 | 从哪读 key | 用途 |
+|------|---------|-----------|------|
+| **辅助视觉 (auxiliary vision)** | 你发图，自动触发 | `config.yaml` → `auxiliary.vision.api_key` | 幕后分析，结果自动塞进对话 |
+| **独立进程** (`analyze_image.sh`) | 我手动调用脚本 | 脚本内 `VISION_API_KEY` 变量 | spawn 独立 Hermes 进程看细节 |
+
+**更新 key 时必须同时更新所有位置：**
+1. `config.yaml` → `auxiliary.vision.api_key` 字段（`hermes config edit` 或 patch）
+2. `analyze_image.sh` → 脚本内 `VISION_API_KEY` 配置区
+3. agent memory（`memory` tool 更新）
+
+**辅助视觉 vs 独立进程的认证差异：**
+- 辅助视觉读的是 `config.yaml` 里的 `auxiliary.vision.api_key`，不依赖环境变量
+- `hermes chat --provider xiaomi` 读的是 `$XIAOMI_API_KEY` 环境变量（来自 `.env` 或 export），**不是** config 里的 auxiliary key
+- 所以如果 `hermes chat --provider xiaomi` 报 401，检查 `.env` 里有没有 `XIAOMI_API_KEY` 或手动 export 环境变量
+
+### 检查 key 是否有效
+```bash
+# 简单测试
+curl -s -w "\n%{http_code}" https://api.xiaomimimo.com/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mimo-v2.5-omni","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}'
+# 返回 401 → key 无效，去 platform.xiaomimimo.com 重新生成
+```
+
 ## Tips
 
 - **模式 B 可以独立配任何模型+key**，主 agent 用 DeepSeek 省钱，视觉 agent 用 GPT-4o/Gemini 看图
