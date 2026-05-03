@@ -490,7 +490,47 @@ try {
 ```
 
 **Loading-order pitfalls:**
-- `window.onerror` handler must be defined *before* any functional code that might throw, otherwise errors are silently swallowed\n- Wrap IIFE auto-init in `try/catch` so a corrupted localStorage or broken init flow doesn't cascade into unclickable buttons\n- If the WebView shows a login modal that overlays the main UI, the modal's `show` class should be controlled by JavaScript (default hidden) rather than being present in the HTML `class` attribute — this prevents a flash of the login overlay on every page load\n- **`onclick = function()` vs `addEventListener`**: Some Android WebViews (especially on older devices or customized OEM browsers) handle `onclick = function() {}` (direct property assignment) more reliably than `addEventListener`. If navigation buttons or other click handlers fail to fire despite the DOM being ready, switch from `btn.addEventListener('click', handler)` to `btn.onclick = handler`. The trade-off: `onclick` only supports one handler per element.\n- **Cascading nav-button failure**: A common symptom in WebView SPAs is that the chat button works but cloud-disk and settings buttons don't. This usually means a JavaScript error in the auto-init IIFE (e.g., `renderServerList()` processing corrupted localStorage data) halted script execution *after* the nav-bar event listeners were registered but *before* the page-switching code ran, OR the `querySelectorAll('.nav-btn')` returned fewer elements than expected because the DOM wasn't fully loaded. The fix stack: (1) move event binding to top of `<script>`, (2) wrap IIFE in try-catch, (3) add a fallback: if auto-init fails, show a visible error toast + a "skip to main" link so the user isn't stuck at a dead modal.\n- **Server restart reminder**: After killing the Flask/Python server process (`fuser -k PORT/tcp`), always verify the new process started: `curl -s -o /dev/null -w '%{http_code}' http://localhost:PORT/`. If you forget to restart, the WebView will show `net::ERR_CONNECTION_REFUSED` and the user sees a blank error page.
+- `window.onerror` handler must be defined *before* any functional code that might throw, otherwise errors are silently swallowed\n- Wrap IIFE auto-init in `try/catch` so a corrupted localStorage or broken init flow doesn't cascade into unclickable buttons\n- If the WebView shows a login modal that overlays the main UI, the modal's `show` class should be controlled by JavaScript (default hidden) rather than being present in the HTML `class` attribute — this prevents a flash of the login overlay on every page load\n- **`onclick = function()` vs `addEventListener`**: Some Android WebViews (especially on older devices or customized OEM browsers) handle `onclick = function() {}` (direct property assignment) more reliably than `addEventListener`. If navigation buttons or other click handlers fail to fire despite the DOM being ready, switch from `btn.addEventListener('click', handler)` to `btn.onclick = handler`. The trade-off: `onclick` only supports one handler per element.\n- **Cascading nav-button failure**: A common symptom in WebView SPAs is that the chat button works but cloud-disk and settings buttons don't. This usually means a JavaScript error in the auto-init IIFE (e.g., `renderServerList()` processing corrupted localStorage data) halted script execution *after* the nav-bar event listeners were registered but *before* the page-switching code ran, OR the `querySelectorAll('.nav-btn')` returned fewer elements than expected because the DOM wasn't fully loaded. The fix stack: (1) move event binding to top of `<script>`, (2) wrap IIFE in try-catch, (3) add a fallback: if auto-init fails, show a visible error toast + a "skip to main" link so the user isn't stuck at a dead modal, (4) add inline `onclick` attributes directly in the HTML, (5) use **event delegation** on a parent container instead of per-element binding, (6) add CSS `touch-action: manipulation` to eliminate the 300ms tap delay on mobile WebViews.\
+\
+   **Technique 4 — Inline onclick in HTML (most reliable fallback):**\
+   Add `onclick` directly to the HTML element so it fires regardless of JS binding timing:\
+   ```html\
+   <button class="nav-btn active" data-page="chat" onclick="switchPage('chat')">💬</button>\
+   <button class="nav-btn" data-page="disk" onclick="switchPage('disk')">☁️</button>\
+   ```\
+   Then define `switchPage(name)` as a global function in the `<script>`:\
+   ```javascript\
+   function switchPage(name) {\
+     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));\
+     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));\
+     const btn = document.querySelector(`.nav-btn[data-page="${name}"]`);\
+     if (btn) btn.classList.add('active');\
+     const page = document.getElementById('page-' + name);\
+     if (page) page.classList.add('active');\
+   }\
+   ```\
+   Inline onclick is the **hardest** binding to break — it works even if `querySelectorAll` fails or DOM timings are off.\
+\
+   **Technique 5 — Event delegation (robust against DOM timing):**\
+   Instead of binding per-element with `forEach`, bind a single listener to the parent container and use `closest()`:\
+   ```javascript\
+   document.querySelector('.sidebar').addEventListener('click', function(e) {\
+     const btn = e.target.closest('.nav-btn');\
+     if (!btn) return;\
+     switchPage(btn.dataset.page);\
+   });\
+   ```\
+   This handles dynamically added buttons and avoids the "elements not yet in DOM" timing pitfall entirely. Use this as a **supplement** to inline onclick, not a replacement — event delegation won't help if the parent container itself doesn't exist yet when the script runs.\
+   \
+   **Technique 6 — CSS touch fixes for mobile WebView:**\
+   Some Android WebViews (especially on custom OEM browsers or lower-end devices) have a **300ms tap delay** or poor touch-event-to-click conversion. Add these CSS properties to clickable elements:\
+   ```css\
+   .nav-btn, button, a, .clickable {\
+     touch-action: manipulation;          /* eliminates 300ms tap delay */\
+     -webkit-tap-highlight-color: transparent;  /* removes gray tap flash */\
+   }\
+   ```\
+   `touch-action: manipulation` tells the browser the element only supports single-finger tap gestures, so the browser can skip the double-tap-to-zoom delay. This is especially important for bottom-navigation buttons where delayed or dropped clicks feel like "buttons don't work."\n- **Server restart reminder**: After killing the Flask/Python server process (`fuser -k PORT/tcp`), always verify the new process started: `curl -s -o /dev/null -w '%{http_code}' http://localhost:PORT/`. If you forget to restart, the WebView will show `net::ERR_CONNECTION_REFUSED` and the user sees a blank error page.
 
 ### Version Management for Iterative Delivery
 
