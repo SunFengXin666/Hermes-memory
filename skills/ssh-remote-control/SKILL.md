@@ -110,6 +110,103 @@ stdin, stdout, stderr = ssh.exec_command(
    ```
    But actually paramiko SSH connects directly (not HTTP), so proxy isn't needed for SSH itself.
 
+## SFTP File Transfers (paramiko)
+
+### Basic SFTP upload/download
+```python
+import paramiko
+from pathlib import Path
+
+client = paramiko.SSHClient()
+client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+client.connect(host, port=22, username='ubuntu', password='password', timeout=15)
+sftp = client.open_sftp()
+
+# Upload
+sftp.put('/local/file.txt', '/remote/file.txt')
+# Download
+sftp.get('/remote/file.txt', '/local/file.txt')
+
+sftp.close()
+client.close()
+```
+
+### 🔑 CRITICAL: Fresh connection per operation (reliability pattern)
+In unstable network environments (GFW, proxy, long idle times), persistent SSH/SFTP connections get **"Socket is closed"** errors. **Never reuse a long-lived SFTP connection** for file uploads/downloads — always create a fresh connection for each operation.
+
+```python
+# BAD: Persistent connection gets "Socket is closed" after idle
+sftp = long_lived_conn['sftp']  # ❌ Will fail randomly
+
+# GOOD: Fresh connection per operation
+def upload_file(host, port, username, password, local_path, remote_path):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(host, port=port, username=username, password=password, timeout=30)
+    sftp = client.open_sftp()
+    sftp.put(local_path, remote_path)
+    sftp.close()
+    client.close()
+```
+
+### SSH Keepalive (for connections that must persist)
+If you must keep a connection alive (e.g., interactive shell), set keepalive to prevent timeout:
+```python
+client.connect(host, port=22, username='ubuntu', password='password', timeout=10)
+client.get_transport().set_keepalive(15)  # Ping every 15 seconds
+```
+
+But prefer stateless pattern (connect → do work → close) over keepalive.
+
+### Async upload with frontend polling (mobile app pattern)
+For mobile apps where SFTP is slow/unreliable:
+1. Phone HTTP uploads file to Flask server (immediate)
+2. Flask saves locally and starts SFTP in background thread (fresh connection)
+3. Flask responds immediately with `{status: 'uploading', filename: 'xxx'}`
+4. Frontend shows progress bar and polls directory listing every 2s
+5. When remote file appears, close progress and show success
+
+```python
+# Flask server: save file, then async SFTP
+local_tmp = UPLOAD_DIR / f"ul_{uuid.uuid4().hex[:12]}_{file.filename}"
+file.save(str(local_tmp))
+threading.Thread(target=_do_sftp_upload, args=(conn_info, local_tmp, remote_path), daemon=True).start()
+return jsonify({'ok': True, 'status': 'uploading', 'filename': file.filename})
+
+def _do_sftp_upload(info, local_path, remote_path):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(info['host'], port=info['port'], username=info['username'], password=info['password'], timeout=30)
+    sftp = client.open_sftp()
+    sftp.put(str(local_path), remote_path)
+    sftp.close()
+    client.close()
+    Path(local_path).unlink(missing_ok=True)
+```
+
+```javascript
+// Frontend: poll remote dir until file appears
+const iv = setInterval(async () => {
+  const resp = await fetch(`/api/disks/${id}/list?path=/remote/dir`);
+  const data = await resp.json();
+  if (data.entries.some(e => e.name === targetFile)) {
+    clearInterval(iv);
+    // success: close modal, show toast, refresh list
+  }
+}, 2000);
+```
+
+### SFTP directory listing
+```python
+items = sftp.listdir_attr('/remote/path')
+entries = [{
+    'name': item.filename,
+    'size': item.st_size,
+    'mtime': item.st_mtime,
+    'is_dir': bool(item.st_mode & 0o40000) if item.st_mode else False,
+} for item in items]
+```
+
 ## Verification
 
 After connecting, always verify:
