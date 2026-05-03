@@ -4,7 +4,7 @@ NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSo
 §
 番茄小说网作家后台：手机15601447368，Cookie登录(sessionid/sid_guard/sid_tt/uid_tt)，browser.cdp_url=http://127.0.0.1:9222。小说《代码深处的体温》，作者恰逢787，/root/novel/有100章大纲。
 §
-GitHub auto-sync (SunFengXin666/Hermes-memory, via on_session_end plugin): local clone at /root/hermes-memory-backup/, sync.sh copies MEMORY.md + USER.md + 4 core system files (AGENTS.md, README.md, CONTRIBUTING.md, SOUL.md) + all skills/ SKILL.md, then git add+commit+push. No cron — syncs after each conversation ends. Plugin: github-sync, file at ~/.hermes/hermes-agent/plugins/github-sync/.
+GitHub memory rule: 先拉后推。每次任务前 cd /root/hermes-memory-backup && bash sync.sh（pull+copy+push）。on_session_end 插件自动触发。Repo: SunFengXin666/Hermes-memory。
 §
 Remote server 81.70.229.222 (Tencent Cloud), Ubuntu 24.04, user: ubuntu. Has Ollama v0.22.1 (systemd, port 11434), model qwen2.5:0.5b. SSH accessible from this host.
 §
