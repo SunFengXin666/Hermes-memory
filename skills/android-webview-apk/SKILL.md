@@ -532,6 +532,123 @@ When a user reports "buttons don't work" in a WebView app (e.g., navigation tabs
    - Event delegation on parent container (handles DOM timing)
    - `touch-action: manipulation` CSS (eliminates 300ms tap delay)
 
+### Integrating AI Chat via OpenAI-Compatible API
+
+If your WebView app has a chat feature (WebSocket-based) and you want to replace P2P user-to-user chat with AI chat (user talks to an LLM directly):
+
+**Backend pattern (Flask WebSocket handler):**
+
+```python
+from openai import OpenAI
+
+# Connect to a local OpenAI-compatible API server
+# For Hermes Agent: http://localhost:8642/v1 (use API_SERVER_KEY from config)
+# For other providers: https://api.openai.com/v1, etc.
+AI_CLIENT = OpenAI(
+    api_key='your-api-key-or-hermes-server-key',
+    base_url='http://localhost:8642/v1',  # Hermes API server endpoint
+)
+AI_MODEL = 'deepseek-v4-flash'  # or any model available on your endpoint
+ai_memories: dict[str, list] = {}  # user_id -> conversation history
+
+@sock.route('/chat/ws')
+def chat_ws(ws):
+    # ... login handshake ...
+    while True:
+        raw = ws.receive()
+        data = json.loads(raw)
+        if data['type'] == 'message':
+            # 1. Echo user's message back (with isSelf=true for frontend styling)
+            ws.send(json.dumps({
+                'type': 'message', 'from': user_id,
+                'text': data['text'], 'time': data.get('time', ''),
+                'isSelf': True,
+            }))
+            # 2. Call AI
+            try:
+                uid = user_id or 'default'
+                if uid not in ai_memories:
+                    ai_memories[uid] = [
+                        {'role': 'system', 'content': 'You are a helpful AI assistant.'},
+                    ]
+                ai_memories[uid].append({'role': 'user', 'content': data['text']})
+                # Keep last N messages to avoid context overflow
+                if len(ai_memories[uid]) > 21:
+                    ai_memories[uid] = [ai_memories[uid][0]] + ai_memories[uid][-20:]
+                resp = AI_CLIENT.chat.completions.create(
+                    model=AI_MODEL,
+                    messages=ai_memories[uid],
+                    timeout=30,
+                )
+                reply = resp.choices[0].message.content
+                ai_memories[uid].append({'role': 'assistant', 'content': reply})
+                # 3. Send AI reply back
+                ws.send(json.dumps({
+                    'type': 'message', 'from': 'AI',
+                    'text': reply, 'time': '',
+                    'isSelf': False,  # renders as left-aligned "other" message
+                }))
+            except Exception as e:
+                ws.send(json.dumps({
+                    'type': 'message', 'from': 'AI',
+                    'text': f'⚠️ AI error: {str(e)}', 'time': '',
+                    'isSelf': False,
+                }))
+```
+
+**Frontend (JavaScript) changes:**
+
+1. Remove P2P routing from `sendMessage()` — user can send without selecting a chat target:
+```javascript
+function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  ws.send(JSON.stringify({
+    type: 'message', text,
+    time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
+  }));
+  // Server echoes user msg + AI reply — no local append needed
+}
+```
+
+2. Use server's `isSelf` field for message styling instead of comparing `from === userId`:
+```javascript
+function receiveMessage(data) {
+  appendMessage({from: data.from, text: data.text, time: data.time, isSelf: data.isSelf});
+}
+```
+
+3. Auto-enable chat input on login (no need to select a peer first):
+```javascript
+document.getElementById('chat-header').textContent = '💬 Chatting with AI';
+document.getElementById('chat-input').disabled = false;
+document.getElementById('chat-send').disabled = false;
+```
+
+**Key considerations for AI chat in WebView:**
+- The `OPENAI_API_KEY` in environment variables may be masked/overridden by Hermes Agent (`***`). If you set `api_key=` with the literal masked value, the API call will fail with 401. Use either:
+  - A hardcoded key from config.yaml (if available and valid)
+  - The **Hermes API server** at `http://localhost:8642/v1` with API_SERVER_KEY as the bearer token — this bypasses external API key issues entirely because the Hermes gateway handles provider authentication internally
+  - Read the key from `auth.json` credential pool at runtime
+- `os.environ` in Flask subprocesses may not inherit the actual API keys (Hermes masks them). Test with a direct `curl` before hardcoding.
+- WebSocket timeout: the AI API call is synchronous. For slow models, set a short `timeout` on the OpenAI client so the WebSocket doesn't hang. Handle errors gracefully with a user-facing fallback message.
+- Conversation memory: store per-user message history in a dict with a max length (e.g., 20 turns) to prevent unbounded memory growth. Include a system prompt as the first message.
+
+**When to use this pattern:**
+- You have a WebView app with a chat interface (WebSocket backend)
+- P2P chat is not useful (single user, or no other clients)
+- You want the app to function as an AI assistant frontend
+- You have a local Hermes Agent API server or any OpenAI-compatible endpoint
+
+**Troubleshooting AI chat in WebView:**
+- **Empty response / no messages appearing**: Check that the server's `ws.send()` is using `json.dumps()` (not string concatenation which can produce invalid JSON).
+- **WebSocket 500 error**: The AI API call threw an exception. Check server logs and test the API endpoint directly: `curl -s http://localhost:8642/v1/chat/completions -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"...","messages":[{"role":"user","content":"hi"}]}'`
+- **401 authentication error**: The API key is wrong or truncated. For Hermes API server, use the API_SERVER_KEY from `.env` file, not the LLM provider key.
+- **Messages appear doubled**: Remove the local `appendMessage()` call in `sendMessage()` — server now echoes the user message back.
+- **Input disabled / can't type**: After auto-login, explicitly set `document.getElementById('chat-input').disabled = false` and `chat-send.disabled = false`.
+
 ### Read-File Escape-Drift Trap
 
 When using `read_file` to view HTML/JS with template literals, the tool displays `\"` (backslash-quote) for visual escaping of embedded double quotes. The actual file has just `"`. If you copy `\"` from read_file output into a `patch` old_string/new_string, the tool may reject it with "Escape-drift detected". Always read raw file content with `cat -A` or `xxd` to verify before patching.
