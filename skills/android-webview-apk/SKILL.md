@@ -954,6 +954,164 @@ if user_id not in ai_memories:
 
 **Paths are server-specific.** If running the Flask app on a different machine, the memory files won't exist. Only use this pattern when the Flask app runs on the same server as Hermes Agent.
 
+### Async SFTP File Operations (Two-Hop Timeout Pattern)
+
+When a WebView app provides file management via a **two-hop** architecture (phone→Flask server→SFTP remote server), the HTTP response from phone→Flask can timeout while Flask→SFTP is still transferring. The file eventually arrives but the user sees a hang or "上传中..." that never resolves.
+
+**The pattern:** Accept the file on the Flask server immediately, return `{'ok': True, 'status': 'uploading'}`, then run the SFTP upload in a background thread.
+
+**Backend — async upload with SSE notification:**
+
+```python
+# Flask upload endpoint
+@app.route('/api/disks/<conn_id>/upload', methods=['POST'])
+def disk_upload(conn_id):
+    conn = sftp_connections.get(conn_id)
+    if not conn:
+        return jsonify({'ok': False, 'error': '连接已断开'}), 404
+    dest_dir = request.form.get('path', '/')
+    file = request.files.get('file')
+    user_id = request.form.get('user_id', '')  # for SSE notification
+    if not file:
+        return jsonify({'ok': False, 'error': '没有文件'}), 400
+    try:
+        local_tmp = UPLOAD_DIR / f"ul_{uuid.uuid4().hex[:12]}_{file.filename}"
+        file.save(str(local_tmp))
+        threading.Thread(target=_do_sftp_upload,
+            args=(conn_id, dest_dir, str(local_tmp), file.filename, user_id),
+            daemon=True).start()
+        return jsonify({'ok': True, 'status': 'uploading'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+def _do_sftp_upload(conn_id, dest_dir, local_path, filename, user_id=''):
+    try:
+        conn = sftp_connections.get(conn_id)
+        if not conn: return
+        sftp = conn['sftp']
+        try: sftp.stat(dest_dir)
+        except: sftp.mkdir(dest_dir)
+        remote_path = os.path.join(dest_dir, filename).replace('\\', '/')
+        sftp.put(local_path, remote_path)
+        # Push SSE event so frontend auto-refreshes
+        if user_id:
+            push_to_user(user_id, {'type': 'disk_refresh', 'path': dest_dir})
+    except Exception:
+        pass
+    finally:
+        try: Path(local_path).unlink(missing_ok=True)
+        except: pass
+```
+
+**Frontend — upload flow:**
+
+```javascript
+async function doUpload() {
+  const file = document.getElementById('upload-file').files[0];
+  if (!file) return;
+  
+  const btn = document.querySelector('#upload-modal .btn-confirm');
+  btn.textContent = '⏳ 上传中...';
+  btn.disabled = true;
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('path', currentDiskPath);
+  formData.append('user_id', userId);  // for SSE callback
+
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/upload`, {
+      method: 'POST', body: formData
+    });
+    const result = await resp.json();
+    btn.textContent = '上传';
+    btn.disabled = false;
+    if (result.status === 'uploading') {
+      closeModal('upload-modal');
+      toast('⏳ 后台上传中...');  // SSE will notify on completion
+    }
+  } catch(e) {
+    btn.textContent = '上传';
+    btn.disabled = false;
+    toast('❌ ' + e.message);
+  }
+}
+```
+
+**Frontend — SSE handler for upload completion:**
+
+```javascript
+function handleSSEMessage(data) {
+  switch(data.type) {
+    case 'disk_refresh':
+      toast('📁 上传完成');
+      diskRefresh();  // reload the current directory listing
+      break;
+    // ... other cases
+  }
+}
+```
+
+**Async download (server-side caching + browser redirect):**
+
+For downloads, the same two-hop timeout issue applies. Instead of streaming the SFTP file through Flask's response (which blocks the HTTP connection during SFTP transfer):
+
+1. Download the SFTP file to a server temp directory
+2. Return a JSON response with a direct URL
+3. `window.open()` the URL in the browser — the phone's system download manager handles it
+
+```python
+import uuid
+from flask import send_from_directory
+
+DOWNLOAD_DIR = Path('/tmp/im-app-downloads')
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+@app.route('/api/disks/<conn_id>/download', methods=['GET'])
+def disk_download(conn_id):
+    conn = sftp_connections.get(conn_id)
+    if not conn:
+        return jsonify({'ok': False, 'error': '连接已断开'}), 404
+    path = request.args.get('path', '')
+    try:
+        filename = os.path.basename(path)
+        local_path = DOWNLOAD_DIR / f"{uuid.uuid4().hex[:8]}_{filename}"
+        conn['sftp'].get(path, str(local_path))
+        return jsonify({'ok': True, 'url': f'/dl/{local_path.name}', 'filename': filename})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+@app.route('/dl/<path:filename>')
+def serve_download(filename):
+    return send_from_directory(str(DOWNLOAD_DIR), filename, as_attachment=True)
+```
+
+```javascript
+async function diskDownload(path) {
+  toast('⏳ 下载中...');
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/download?path=${encodeURIComponent(path)}`);
+    const result = await resp.json();
+    if (!result.ok) { toast('❌ ' + result.error); return; }
+    window.open(window.location.origin + result.url, '_blank');
+  } catch(e) {
+    toast('❌ 下载失败: ' + e.message);
+  }
+}
+```
+
+**Key principles:**
+- Phone→Flask first hop must return immediately (acceptable latency: <5s even for large files)
+- Flask→SFTP second hop is async (can take minutes for large files over slow connections)
+- Use SSE to notify the frontend when background operations complete
+- The download cache dir (`/tmp/im-app-downloads/`) is ephemeral — files are lost on server restart. For production, use a persistent directory with periodic cleanup.
+
+**When to use this pattern:**
+- WebView app with server-side SFTP/SSH file management
+- Large file uploads where SFTP takes >10 seconds
+- Mobile networks where HTTP connections are unreliable for long-lived transfers
+- Users report "上传中..." that never resolves but files eventually appear
+
 ### When to use SSE Instead of WebSocket
 
 - Users report "Still in CONNECTING" error on mobile networks
