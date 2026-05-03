@@ -360,6 +360,54 @@ setTimeout(() => process.exit(0), 8000);
 "
 ```
 
+### localStorage Persistence Pattern for Config Data
+
+When building a WebView APK, every page refresh acts like an "app restart" — all in-memory JS state is lost. Users expect configuration (server lists, API keys, account settings) to persist across app opens.
+
+**Pattern: Save structured config to localStorage and auto-restore**
+
+```javascript
+// 1. State: load from localStorage on page load
+let savedServers = JSON.parse(localStorage.getItem('im_servers') || '[]');
+
+// 2. Save after successful operation
+function afterConnect(serverData) {
+  const entry = { name, host, port, username, password };
+  // Deduplicate by host+port+username
+  const idx = savedServers.findIndex(s => s.host === host && s.port === port && s.username === username);
+  if (idx >= 0) savedServers[idx] = entry;
+  else savedServers.push(entry);
+  localStorage.setItem('im_servers', JSON.stringify(savedServers));
+}
+
+// 3. Render saved-but-not-connected items as clickable entries
+function renderServerList() {
+  // Show connected servers + saved servers
+  savedServers.filter(s => !isCurrentlyConnected(s)).forEach(s => {
+    renderDisconnectedItem(s);  // "○ 已保存 (点击重连)"
+  });
+}
+
+// 4. Click-to-reconnect without re-entering credentials
+async function reconnectServer(saved) {
+  const resp = await fetch('/api/disks/connect', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(saved),
+  });
+  // ... handle response, update UI
+}
+```
+
+**Key considerations for WebView:**
+- `setDomStorageEnabled(true)` **must** be set in `MainActivity.java` for localStorage to work
+- Don't store sensitive credentials (passwords, API keys) in plaintext localStorage for production apps. For a personal/debug app behind WebView, it's acceptable.
+- Render the rendered list immediately after login so saved items appear without a reconnect attempt
+- Server-side sessions (SSH/SFTP) are **not** preserved across refresh — you must re-establish them on reconnect. The localStorage only preserves the **connection config**, not the connection itself.
+
+**The 'wrong port' pitfall for SSH/SFTP in WebView apps:**
+A common user mistake when filling server config: they enter the port of a different service (e.g., Ollama port 11434, HTTP port 8080) instead of SSH port **22**. Always default the port input to `22` and consider adding a placeholder note like "SSH端口 (默认22)". If the connection times out, the first thing to check is the port number.
+
 ## Pitfalls
 
 1. **docker pull fails on Chinese servers** — Docker Hub is frequently blocked. Don't rely on Docker-based Android build images. Download JDK/Gradle/SDK directly via proxy (mihomo/clash).
