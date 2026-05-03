@@ -507,13 +507,105 @@ A common user mistake when filling server config: they enter the port of a diffe
         return resp
     ```
 
-11. **SwipeRefreshLayout interferes with chat scrolling** — When the WebView wraps a chat app where the user scrolls UP to see older messages, `SwipeRefreshLayout` intercepts upward scrolls as pull-to-refresh gestures. This causes the page to reload instead of scrolling. Fix: remove SwipeRefreshLayout entirely if the app doesn't need pull-to-refresh:
+11. **SwipeRefreshLayout interferes with chat scrolling** — When the WebView wraps a chat app where the user scrolls UP to see older messages, `SwipeRefreshLayout` intercepts upward scrolls as pull-to-refresh gestures. This causes the page to reload instead of scrolling.
+
+    **Option A: Remove SwipeRefreshLayout entirely** (if no pull-to-refresh needed):
     - **Layout**: Remove `<androidx.swiperefreshlayout.widget.SwipeRefreshLayout>` wrapper, put WebView directly inside the root layout
     - **Java**: Remove `import androidx.swiperefreshlayout.widget.SwipeRefreshLayout`, remove all `swipeRefresh` references, remove `setOnRefreshListener`
     - **build.gradle**: Remove `implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'` dependency
-    - Keep SwipeRefreshLayout only if the user explicitly asks for pull-to-refresh (e.g., a news reader or browser app). For chat/terminal/input-heavy apps, remove it.
+
+    **Option B: Page-specific pull-to-refresh via JavaScriptInterface** (if some pages need refresh but others don't, e.g., only cloud disk page):
+
+    Keep SwipeRefreshLayout in XML/Java, add a JS bridge to track which page is active:
+
+    **Java — add JS interface for page tracking:**
+    ```java
+    // Add AFTER webView.getSettings() configuration, BEFORE webView.loadUrl()
+    private volatile boolean isSwipeRefreshActive = false;
+
+    webView.addJavascriptInterface(new Object() {
+        @JavascriptInterface
+        public void onPageChange(String pageName) {
+            isSwipeRefreshActive = "disk".equals(pageName);  // only disk page
+        }
+    }, "AndroidBridge");
+
+    // Conditional refresh listener
+    swipeRefresh.setOnRefreshListener(() -> {
+        if (isSwipeRefreshActive) {
+            webView.evaluateJavascript("diskRefresh();", null);
+        }
+        swipeRefresh.setRefreshing(false);
+    });
+    ```
+
+    **JavaScript — notify Android on page switch:**
+    ```javascript
+    function switchPage(name) {
+      // ... existing page-switch logic ...
+      if (typeof AndroidBridge !== 'undefined') {
+        AndroidBridge.onPageChange(name);
+      }
+    }
+    ```
+
+    **When to use Option B:** User explicitly wants pull-to-refresh on specific pages (e.g., cloud disk file list) but not on others (e.g., chat where scroll-up reads old messages). The JS bridge ensures the gesture only triggers on the intended page.
 
 12. **Flexbox `min-height: 0` bug breaks scrolling in nested flex layouts** — In Android WebView, a flex container with `overflow-y: auto` will NOT scroll if its parent flex chain doesn't have `min-height: 0` set at every level. This is a CSS Flexbox spec behavior: by default, flex items have `min-height: auto` (cannot shrink below content size), which prevents the `overflow: auto` child from establishing a scroll container. The symptom: the page looks correct, messages render, but `.chat-messages { overflow-y: auto }` never activates — content overflows invisibly or pushes siblings out of view. Fix:\n    - Add `min-height: 0` to every flex child in the chain: `.page { min-height: 0 }`, `.chat-layout { min-height: 0 }`, `.chat-area { min-height: 0 }`, `.chat-messages { min-height: 0 }`\n    - Test by adding many messages; if they don't scroll, trace up the flex hierarchy and add `min-height: 0` to each ancestor\n    - This also applies to horizontal flex overflow: use `min-width: 0` for horizontal scroll containers\n\n13. **File upload silently fails in WebView** — `<input type=\"file\">` in a WebView does nothing unless the `WebChromeClient` overrides `onShowFileChooser`. Without it, the file picker dialog never opens. The user can click \"选择文件\" and see the Android file picker, but the JavaScript `fileInput.files[0]` will be `null` because the callback was never invoked. Fix: implement `onShowFileChooser` in the WebChromeClient (see MainActivity.java template above) and handle the result in `onActivityResult`. Add `setAllowFileAccess(true)` to WebSettings (already covered above).
+
+### Setting DownloadListener for System Download Manager
+
+When your WebView app serves file downloads (e.g., cloud disk / SFTP file browser), the browser's default download behavior may not work — `window.open` is blocked, `<a>` clicks do nothing, or the file opens in the WebView instead of downloading.  
+
+Fix: add `setDownloadListener` to route downloads through Android's system `DownloadManager`, which shows a persistent notification in the status bar.
+
+**Java (after WebChromeClient setup):**
+```java
+import android.app.DownloadManager;
+import android.content.Context;
+import android.net.Uri;
+import android.os.Environment;
+import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
+
+webView.setDownloadListener(new DownloadListener() {
+    @Override
+    public void onDownloadStart(String url, String userAgent,
+        String contentDisposition, String mimetype, long contentLength) {
+        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+        request.setMimeType(mimetype);
+        String filename = URLUtil.guessFileName(url, contentDisposition, mimetype);
+        request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
+        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        if (dm != null) dm.enqueue(request);
+    }
+});
+```
+
+**When paired with async server-side download (see "Async SFTP" section):**
+1. Frontend clicks download → API call to server
+2. Server SFTP-downloads file to local `/tmp/im-app-downloads/`
+3. Server returns JSON `{"url": "/dl/xxx_filename"}`
+4. Frontend creates `<a href="/dl/xxx_filename">` and clicks it
+5. `DownloadListener` intercepts the navigation to `/dl/xxx_filename`
+6. System DownloadManager downloads to `Downloads/` folder
+7. User sees a notification when complete
+
+**Required permissions** (already in manifest from setup):
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28" />
+```
+- `WRITE_EXTERNAL_STORAGE` is only needed for Android 9 (API 28) and below — Android 10+ uses scoped storage and `DownloadManager` handles it internally.
+- No runtime permission request needed — `DownloadManager` is a system service.
+
+**Caveats:**
+- Files go to `Downloads/` folder — you cannot choose a custom directory
+- Large files show notification progress automatically
+- The download URL must be accessible from the Android device (same network, no localhost redirects)
+- The temp file on the server (`/tmp/im-app-downloads/`) is ephemeral — the download must complete before the server restarts
 
 ### WebView JS Diagnostic Protocol (buttons don't work? check these in order)
 
@@ -1056,9 +1148,10 @@ function handleSSEMessage(data) {
 
 For downloads, the same two-hop timeout issue applies. Instead of streaming the SFTP file through Flask's response (which blocks the HTTP connection during SFTP transfer):
 
-1. Download the SFTP file to a server temp directory
-2. Return a JSON response with a direct URL
-3. `window.open()` the URL in the browser — the phone's system download manager handles it
+1. Download the SFTP file to a server temp directory (returns immediately)
+2. Return a JSON response with a direct URL  
+3. Frontend creates an `<a>` element with that URL and clicks it
+4. Android `DownloadListener` intercepts the navigation → system `DownloadManager` handles it
 
 ```python
 import uuid
@@ -1093,12 +1186,27 @@ async function diskDownload(path) {
     const resp = await fetch(`/api/disks/${activeServerId}/download?path=${encodeURIComponent(path)}`);
     const result = await resp.json();
     if (!result.ok) { toast('❌ ' + result.error); return; }
-    window.open(window.location.origin + result.url, '_blank');
+    // Use <a> tag click — triggers Android DownloadListener
+    const fullUrl = window.location.origin + result.url;
+    const a = document.createElement('a');
+    a.href = fullUrl;
+    a.download = result.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast('✅ 开始下载');
   } catch(e) {
     toast('❌ 下载失败: ' + e.message);
   }
 }
 ```
+
+**Why `<a>` click instead of `window.open` or `fetch` + blob:**
+- `window.open` is blocked by most WebViews (popup blocker)
+- `fetch` + blob + `URL.createObjectURL` loads entire file into memory before saving (bad for large files)
+- `<a>` click triggers `DownloadListener` → system download manager → file saved to `Downloads/` with notification progress
+- Works even for large files (streamed directly by WebView)  
+- Android `DownloadListener` (see MainActivity code above) must be set for this to work
 
 **Key principles:**
 - Phone→Flask first hop must return immediately (acceptable latency: <5s even for large files)
