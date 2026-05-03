@@ -2,7 +2,7 @@ Hermes Agent web management panel deployed at /root/hermes-webui/app.py. A Flask
 §
 Mihomo proxy at /etc/mihomo/ (systemd mihomo.service). Mixed proxy 127.0.0.1:7890, SOCKS 7891, API 9090. Use export https_proxy=http://127.0.0.1:7890 for foreign downloads (curl/wget/git). All foreign traffic goes through proxy; domestic sources (aliyun, tencent, pypi mirrors) direct. Subscription from yfssce.net. Geoip/geosite via ghproxy.net mirror.
 §
-Vision model providers: auxiliary vision switched to Xiaomi MiMo (MiMo-V2.5-Omni) in config. nvidia/nemotron-nano-12b-v2-vl:free on OpenRouter decommissioned. MiMo API key: tp-c05czm1kueef6yqlxczc9hv03zlak7u3hobtnwjxun4tbqxr.
+Vision model providers: auxiliary vision uses Xiaomi MiMo (MiMo-V2.5-Omni). MiMo API key: tp-cr3x7h17d0ss3kupmhid5jhcngsdk4gg75k3yve2jnby218r.
 §
 NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSocket). Also WebSocket at 6099 port (with token). Send-image helper scripts at /opt/napcat/send_image.js (uses NCWebsocket library, target QQ 3240171077, file path /root/qrcode.png). Also /opt/napcat/send.js (native ws). To send QR/image to QQ via NapCat: cp screenshot /root/qrcode.png && cd /opt/napcat && node send_image.js. NapCat Docker container name: napcatf.
 §
