@@ -298,7 +298,57 @@ If you use hardlinks (`ln`) or copies, behavior is the same.
 | Many small commits cluttering history | Increase cron interval (e.g., `*/30 * * * *` for every 30 minutes) |
 | File too large | Git has a 100MB file limit by default. These files are typically tiny (1-3KB) — not an issue |
 
-## Quick One-Liner Setup (After Authentication)
+## Bidirectional Sync (Pull Before Push)
+
+The basic setup above is one-directional (local → GitHub). For bidirectional sync (pull latest from GitHub, then push local changes):
+
+**Add `git pull` before the copy-and-push steps in your sync script:**
+
+```bash
+#!/bin/bash
+export https_proxy=http://127.0.0.1:7890
+export http_proxy=http://127.0.0.1:7890
+
+cd /root/github-sync/hermes-memory
+
+# ── 1. Pull latest from GitHub first ──
+git pull --no-edit origin main 2>/dev/null || true
+
+# ── 2. Copy latest local files (overwrite GitHub versions) ──
+cp /root/.hermes/memories/MEMORY.md ./MEMORY.md
+cp /root/.hermes/memories/USER.md ./USER.md
+
+# ── 3. Copy back any GitHub-side changes to local ──
+# If someone edited MEMORY.md/USER.md on GitHub, overwrite local
+if [ -f ./MEMORY.md ]; then
+    cp ./MEMORY.md /root/.hermes/memories/MEMORY.md
+fi
+if [ -f ./USER.md ]; then
+    cp ./USER.md /root/.hermes/memories/USER.md
+fi
+
+# ── 4. Check if anything changed ──
+if git diff --quiet; then
+    exit 0
+fi
+
+# ── 5. Commit and push ──
+git add MEMORY.md USER.md
+git commit -m "sync: auto-update $(date '+%Y-%m-%d %H:%M')"
+git push
+```
+
+**The key addition is step 3** — copying GitHub-side changes back to the local Hermes memory files. This ensures that if someone pushed changes to GitHub from another machine or the web UI, those changes propagate back to the local server.
+
+**When to use bidirectional sync:**
+- You or others edit memory files from multiple machines
+- You use GitHub's web UI (edit-on-web) to update memory
+- The memory files are shared across development/production environments
+- You want to be able to roll back by pushing an older version from another clone
+
+**Caveats:**
+- Step 1 (`git pull`) may fail if there are uncommitted local changes. The `2>/dev/null || true` swallows merge conflicts. For simple text files (MEMORY.md, USER.md), this is usually fine — the copy in step 2 overwrites any conflicts.
+- If there are genuine conflicts (same line edited differently in local vs remote), the later `git push` may be rejected. In that case, manually resolve: `cd /root/github-sync/hermes-memory && git status && git mergetool`.
 
 This sets up everything in one go:
 
