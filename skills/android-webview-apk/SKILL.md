@@ -191,11 +191,15 @@ dependencies {
 </manifest>
 ```
 
-**MainActivity.java** (WebView wrapper):
+**MainActivity.java** (WebView wrapper with file upload support):
 ```java
 package com.myapp.app;
 
+import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -207,6 +211,8 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private SwipeRefreshLayout swipeRefresh;
     private String serverUrl;
+    private ValueCallback<Uri[]> uploadCallback;
+    private static final int FILE_CHOOSER_REQUEST = 1001;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -239,9 +245,51 @@ public class MainActivity extends AppCompatActivity {
                 swipeRefresh.setRefreshing(false);
             }
         });
-        webView.setWebChromeClient(new WebChromeClient());
+
+        // CRITICAL: File upload support - without onShowFileChooser, <input type="file">
+        // does nothing in Android WebView. The user can select files but the "upload"
+        // button silently does nothing.
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(
+                WebView view,
+                ValueCallback<Uri[]> filePathCallback,
+                FileChooserParams fileChooserParams
+            ) {
+                if (uploadCallback != null) {
+                    uploadCallback.onReceiveValue(null);
+                }
+                uploadCallback = filePathCallback;
+                Intent intent = fileChooserParams.createIntent();
+                try {
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST);
+                } catch (Exception e) {
+                    uploadCallback.onReceiveValue(null);
+                    uploadCallback = null;
+                    return false;
+                }
+                return true;
+            }
+        });
+
         swipeRefresh.setOnRefreshListener(() -> webView.reload());
         webView.loadUrl(serverUrl);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILE_CHOOSER_REQUEST) {
+            if (uploadCallback != null) {
+                Uri[] results = null;
+                if (resultCode == Activity.RESULT_OK && data != null) {
+                    results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                }
+                uploadCallback.onReceiveValue(results);
+                uploadCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
@@ -465,10 +513,7 @@ A common user mistake when filling server config: they enter the port of a diffe
     - **build.gradle**: Remove `implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'` dependency
     - Keep SwipeRefreshLayout only if the user explicitly asks for pull-to-refresh (e.g., a news reader or browser app). For chat/terminal/input-heavy apps, remove it.
 
-12. **Flexbox `min-height: 0` bug breaks scrolling in nested flex layouts** — In Android WebView, a flex container with `overflow-y: auto` will NOT scroll if its parent flex chain doesn't have `min-height: 0` set at every level. This is a CSS Flexbox spec behavior: by default, flex items have `min-height: auto` (cannot shrink below content size), which prevents the `overflow: auto` child from establishing a scroll container. The symptom: the page looks correct, messages render, but `.chat-messages { overflow-y: auto }` never activates — content overflows invisibly or pushes siblings out of view. Fix:
-    - Add `min-height: 0` to every flex child in the chain: `.page { min-height: 0 }`, `.chat-layout { min-height: 0 }`, `.chat-area { min-height: 0 }`, `.chat-messages { min-height: 0 }`
-    - Test by adding many messages; if they don't scroll, trace up the flex hierarchy and add `min-height: 0` to each ancestor
-    - This also applies to horizontal flex overflow: use `min-width: 0` for horizontal scroll containers
+12. **Flexbox `min-height: 0` bug breaks scrolling in nested flex layouts** — In Android WebView, a flex container with `overflow-y: auto` will NOT scroll if its parent flex chain doesn't have `min-height: 0` set at every level. This is a CSS Flexbox spec behavior: by default, flex items have `min-height: auto` (cannot shrink below content size), which prevents the `overflow: auto` child from establishing a scroll container. The symptom: the page looks correct, messages render, but `.chat-messages { overflow-y: auto }` never activates — content overflows invisibly or pushes siblings out of view. Fix:\n    - Add `min-height: 0` to every flex child in the chain: `.page { min-height: 0 }`, `.chat-layout { min-height: 0 }`, `.chat-area { min-height: 0 }`, `.chat-messages { min-height: 0 }`\n    - Test by adding many messages; if they don't scroll, trace up the flex hierarchy and add `min-height: 0` to each ancestor\n    - This also applies to horizontal flex overflow: use `min-width: 0` for horizontal scroll containers\n\n13. **File upload silently fails in WebView** — `<input type=\"file\">` in a WebView does nothing unless the `WebChromeClient` overrides `onShowFileChooser`. Without it, the file picker dialog never opens. The user can click \"选择文件\" and see the Android file picker, but the JavaScript `fileInput.files[0]` will be `null` because the callback was never invoked. Fix: implement `onShowFileChooser` in the WebChromeClient (see MainActivity.java template above) and handle the result in `onActivityResult`. Add `setAllowFileAccess(true)` to WebSettings (already covered above).
 
 ### WebView JS Diagnostic Protocol (buttons don't work? check these in order)
 
