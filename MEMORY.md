@@ -6,8 +6,10 @@ NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSo
 §
 番茄小说网(fanqienovel.com)作家后台：手机号15601447368。Cookie注入登录可用（CDP Network.setCookie）。Key cookies: sessionid/sessionid_ss/sid_guard/sid_tt=83658aa347c0559752de36a8f5a0cb62, uid_tt/uid_tt_ss=00da09923efe2f27798708fcb5b67c4e, domain=fanqienovel.com, httpOnly&secure=true。验证码登录有火山引擎滑块。browser.cdp_url设置为http://127.0.0.1:9222解决频繁掉线。
 §
-用户小说《代码深处的体温》（原《跨越维度的深情》），番茄小说网连载，作者恰逢787。已发3章：你好，露丝（第3章）。100章大纲+人物档案在/root/novel/。标题不加"第X章"，发时勾选AI标记。各章约2000字。
+用户小说《代码深处的体温》番茄连载，作者恰逢787。已发3章。100章大纲+人物档案在/root/novel/。
 §
 GitHub auto-sync (SunFengXin666/Hermes-memory, via on_session_end plugin): local clone at /root/hermes-memory-backup/, sync.sh copies MEMORY.md + USER.md + 4 core system files (AGENTS.md, README.md, CONTRIBUTING.md, SOUL.md) + all skills/ SKILL.md, then git add+commit+push. No cron — syncs after each conversation ends. Plugin: github-sync, file at ~/.hermes/hermes-agent/plugins/github-sync/.
 §
-Remote server 81.70.229.222 (Tencent Cloud), Ubuntu 24.04, user: ubuntu, pw: SunFengXin521?. Has python3/pip/curl/wget. SSH accessible from this host. Has OpenClaw installed.
+Remote server 81.70.229.222 (Tencent Cloud), Ubuntu 24.04, user: ubuntu. Has Ollama v0.22.1 (systemd, port 11434), model qwen2.5:0.5b. SSH accessible from this host.
+§
+Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/android-sdk (platform 34), Gradle 8.5 /opt/gradle/gradle-8.5. IM+云盘 project at /root/im-app/ (Flask), Android project at /root/im-app-android/. APK at /root/im-app.apk.
