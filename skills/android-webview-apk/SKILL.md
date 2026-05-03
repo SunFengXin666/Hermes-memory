@@ -459,6 +459,17 @@ A common user mistake when filling server config: they enter the port of a diffe
         return resp
     ```
 
+11. **SwipeRefreshLayout interferes with chat scrolling** — When the WebView wraps a chat app where the user scrolls UP to see older messages, `SwipeRefreshLayout` intercepts upward scrolls as pull-to-refresh gestures. This causes the page to reload instead of scrolling. Fix: remove SwipeRefreshLayout entirely if the app doesn't need pull-to-refresh:
+    - **Layout**: Remove `<androidx.swiperefreshlayout.widget.SwipeRefreshLayout>` wrapper, put WebView directly inside the root layout
+    - **Java**: Remove `import androidx.swiperefreshlayout.widget.SwipeRefreshLayout`, remove all `swipeRefresh` references, remove `setOnRefreshListener`
+    - **build.gradle**: Remove `implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'` dependency
+    - Keep SwipeRefreshLayout only if the user explicitly asks for pull-to-refresh (e.g., a news reader or browser app). For chat/terminal/input-heavy apps, remove it.
+
+12. **Flexbox `min-height: 0` bug breaks scrolling in nested flex layouts** — In Android WebView, a flex container with `overflow-y: auto` will NOT scroll if its parent flex chain doesn't have `min-height: 0` set at every level. This is a CSS Flexbox spec behavior: by default, flex items have `min-height: auto` (cannot shrink below content size), which prevents the `overflow: auto` child from establishing a scroll container. The symptom: the page looks correct, messages render, but `.chat-messages { overflow-y: auto }` never activates — content overflows invisibly or pushes siblings out of view. Fix:
+    - Add `min-height: 0` to every flex child in the chain: `.page { min-height: 0 }`, `.chat-layout { min-height: 0 }`, `.chat-area { min-height: 0 }`, `.chat-messages { min-height: 0 }`
+    - Test by adding many messages; if they don't scroll, trace up the flex hierarchy and add `min-height: 0` to each ancestor
+    - This also applies to horizontal flex overflow: use `min-width: 0` for horizontal scroll containers
+
 ### WebView JS Diagnostic Protocol (buttons don't work? check these in order)
 
 When a user reports "buttons don't work" in a WebView app (e.g., navigation tabs unresponsive, chat send button dead, login stuck), follow this diagnostic order:
