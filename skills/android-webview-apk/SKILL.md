@@ -370,7 +370,22 @@ setTimeout(() => process.exit(0), 8000);
 6. **Cleartext traffic** — Android 9+ blocks HTTP by default. Set `android:usesCleartextTraffic="true"` in manifest AND provide `network_security_config.xml`.
 7. **Gradle daemon conflict** — Kill old daemons (`pkill -f GradleDaemon`) before restarting a failed build. Stale daemons hold port locks.
 8. **Maven/Google proxy** — Gradle needs to reach `dl.google.com` and `repo1.maven.org`. If proxy is required, set `GRADLE_OPTS` with `-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890` or configure in `gradle.properties`.
-9. **WebView wide viewport breaks mobile CSS** — `setUseWideViewPort(true)` (the Android default) makes the WebView report ~980px CSS width, so `@media(max-width:600px)` media queries never trigger. For mobile-responsive web apps, set `setUseWideViewPort(false)` so the WebView reports actual device pixels. Design the web app with mobile-first CSS (default = phone layout, `@media(min-width:768px)` = desktop) so it always renders correctly regardless of viewport configuration.
+9. **WebView wide viewport breaks mobile CSS** — `setUseWideViewPort(true)` (the Android default) makes the WebView report ~980px CSS width, so `@media(max-width:600px)` media queries never trigger. For mobile-responsive web apps, **BOTH** fixes are needed:
+   - Android code: `webView.getSettings().setUseWideViewPort(false)` so WebView reports actual device width
+   - Web CSS: Use **mobile-first** CSS — default styles target phone portrait (bottom nav, single-panel pages), and `@media(min-width:768px)` switches to desktop layout (left sidebar, multi-panel). This way, even if WebView reports an unexpected width, the phone layout shows by default.
+   - Server: Add `Cache-Control: no-cache, no-store, must-revalidate` headers to the Flask/backend response to prevent the WebView from serving stale HTML/CSS on relaunch.
+   - Web app: Persist user session data (e.g., username, port) in `localStorage` so page refresh doesn't force re-login. Auto-login on page load with `localStorage.getItem('im_username')`.
+
+10. **WebView serve stale content** — If the Flask server updates HTML/CSS but the WebView still shows old content, add no-cache headers to the server response:
+    ```python
+    @app.route('/')
+    def index():
+        resp = make_response(render_template('index.html'))
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+    ```
 
 ## Verification
 

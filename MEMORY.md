@@ -9,3 +9,5 @@ GitHub auto-sync (SunFengXin666/Hermes-memory, via on_session_end plugin): local
 Remote server 81.70.229.222 (Tencent Cloud), Ubuntu 24.04, user: ubuntu. Has Ollama v0.22.1 (systemd, port 11434), model qwen2.5:0.5b. SSH accessible from this host.
 §
 Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/android-sdk (platform 34), Gradle 8.5 /opt/gradle/gradle-8.5. IM+云盘 project at /root/im-app/ (Flask), Android project at /root/im-app-android/. APK at /root/im-app.apk.
+§
+User's IM+Cloud Android app project at /root/im-app/ (Flask backend + HTML/JS frontend) and /root/im-app-android/ (Android WebView APK wrapper). Run Flask: cd /root/im-app && python3 app.py --host 0.0.0.0 --port 8080. Build APK: set env JAVA_HOME/ANDROID_HOME/GRADLE_HOME, cd /root/im-app-android && gradle assembleDebug --no-daemon. APK at app/build/outputs/apk/debug/app-debug.apk.
