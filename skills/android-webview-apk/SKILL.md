@@ -459,6 +459,83 @@ A common user mistake when filling server config: they enter the port of a diffe
         return resp
     ```
 
+### WebView JS Diagnostic Protocol (buttons don't work? check these in order)
+
+When a user reports "buttons don't work" in a WebView app (e.g., navigation tabs unresponsive, chat send button dead, login stuck), follow this diagnostic order:
+
+1. **Quick CDP sanity check** — Load the page in a headless browser (use `browser_navigate` + `browser_console`) and check if ANY JS function is defined:
+   ```javascript
+   typeof switchPage  // "undefined" → entire script block failed to parse
+   typeof userId       // "undefined" → confirms
+   ```
+   If `typeof` returns `"undefined"` for any global variable defined in the script, the entire `<script>` block failed to parse. **Stop debugging event binding or CSS fixes** — they are irrelevant until the syntax error is fixed.
+
+2. **Syntax validation** — Extract all `<script>` content and run through Node.js syntax check:
+   ```bash
+   python3 -c "
+   import re
+   with open('templates/index.html') as f:
+       html = f.read()
+   scripts = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)
+   for i, js in enumerate(scripts):
+       import tempfile, subprocess
+       with tempfile.NamedTemporaryFile(suffix='.js', mode='w', delete=False) as t:
+           t.write(js)
+       r = subprocess.run(['node', '--check', t.name], capture_output=True, text=True)
+       if r.returncode != 0:
+           print(f'SCRIPT BLOCK {i}: SYNTAX ERROR')
+           print(r.stderr)
+           # Show context around the error line
+           lines = js.split('\n')
+           import re as re2
+           m = re2.search(r'\((\d+):(\d+)\)', r.stderr)
+           if m:
+               ln = int(m.group(1))
+               for dl in range(-3, 4):
+                   idx = ln - 1 + dl
+                   if 0 <= idx < len(lines):
+                       print(f'  {idx+1}: {lines[idx]}')
+       else:
+           print(f'SCRIPT BLOCK {i}: OK')
+       import os; os.unlink(t.name)
+   "
+   ```
+
+3. **Common syntax error: prematurely closed template literal** — A backtick in the wrong place closes a multi-line template string early, making the next line's HTML tags parse as raw JavaScript (most insidious because the HTML still renders fine):
+
+   ❌ **Broken** — backtick before `</div>` closes the template early:
+   ```javascript
+   return `<div class="server-item" onclick="fn('${name}')\">`\n        <div class=\"name\">${item.name}</div>     // SyntaxError: 'class' unexpected
+         </div>`;
+   ```
+   ✅ **Fixed** — no backtick until the actual end:
+   ```javascript
+   return `<div class="server-item" onclick="fn('${name}')\">\n        <div class=\"name\">${item.name}</div>
+         </div>`;
+   ```
+
+4. **Explicit style.display fallback** — If `classList` toggle works on desktop but not on some WebViews (custom OEM browsers), explicitly set `style.display` instead of relying on CSS `.active { display: flex }`:
+   ```javascript
+   document.querySelectorAll('.page').forEach(p => {
+     p.classList.remove('active');
+     p.style.display = 'none';        // ← explicit
+   });
+   const page = document.getElementById('page-' + name);
+   if (page) {
+     page.classList.add('active');
+     page.style.display = 'flex';      // ← explicit
+   }
+   ```
+
+5. **Event binding robustness** — If syntax is clean and display works, layer these defenses:
+   - Inline `onclick` in HTML (hardest to break)
+   - Event delegation on parent container (handles DOM timing)
+   - `touch-action: manipulation` CSS (eliminates 300ms tap delay)
+
+### Read-File Escape-Drift Trap
+
+When using `read_file` to view HTML/JS with template literals, the tool displays `\"` (backslash-quote) for visual escaping of embedded double quotes. The actual file has just `"`. If you copy `\"` from read_file output into a `patch` old_string/new_string, the tool may reject it with "Escape-drift detected". Always read raw file content with `cat -A` or `xxd` to verify before patching.
+
 ### Silent JavaScript Failure: Entire Script Block Fails to Parse
 
 **The most insidious WebView bug:** A syntax error ANYWHERE in a `<script>` block causes the ENTIRE block to fail silently — no functions are registered, no error is visible in the UI. The page renders normally (HTML+CSS load fine), but ALL JavaScript (navigation, login, API calls) is dead. The only clue is that every `typeof x` returns `"undefined"`.
@@ -544,7 +621,7 @@ try {
 ```
 
 **Loading-order pitfalls:**
-- `window.onerror` handler must be defined *before* any functional code that might throw, otherwise errors are silently swallowed\n- Wrap IIFE auto-init in `try/catch` so a corrupted localStorage or broken init flow doesn't cascade into unclickable buttons\n- If the WebView shows a login modal that overlays the main UI, the modal's `show` class should be controlled by JavaScript (default hidden) rather than being present in the HTML `class` attribute — this prevents a flash of the login overlay on every page load\n- **`onclick = function()` vs `addEventListener`**: Some Android WebViews (especially on older devices or customized OEM browsers) handle `onclick = function() {}` (direct property assignment) more reliably than `addEventListener`. If navigation buttons or other click handlers fail to fire despite the DOM being ready, switch from `btn.addEventListener('click', handler)` to `btn.onclick = handler`. The trade-off: `onclick` only supports one handler per element.\n- **Cascading nav-button failure**: A common symptom in WebView SPAs is that the chat button works but cloud-disk and settings buttons don't. This usually means a JavaScript error in the auto-init IIFE (e.g., `renderServerList()` processing corrupted localStorage data) halted script execution *after* the nav-bar event listeners were registered but *before* the page-switching code ran, OR the `querySelectorAll('.nav-btn')` returned fewer elements than expected because the DOM wasn't fully loaded. The fix stack: (1) move event binding to top of `<script>`, (2) wrap IIFE in try-catch, (3) add a fallback: if auto-init fails, show a visible error toast + a "skip to main" link so the user isn't stuck at a dead modal, (4) add inline `onclick` attributes directly in the HTML, (5) use **event delegation** on a parent container instead of per-element binding, (6) add CSS `touch-action: manipulation` to eliminate the 300ms tap delay on mobile WebViews.\
+- `window.onerror` handler must be defined *before* any functional code that might throw, otherwise errors are silently swallowed\n- Wrap IIFE auto-init in `try/catch` so a corrupted localStorage or broken init flow doesn't cascade into unclickable buttons\n- If the WebView shows a login modal that overlays the main UI, the modal's `show` class should be controlled by JavaScript (default hidden) rather than being present in the HTML `class` attribute — this prevents a flash of the login overlay on every page load\n- **`onclick = function()` vs `addEventListener`**: Some Android WebViews (especially on older devices or customized OEM browsers) handle `onclick = function() {}` (direct property assignment) more reliably than `addEventListener`. If navigation buttons or other click handlers fail to fire despite the DOM being ready, switch from `btn.addEventListener('click', handler)` to `btn.onclick = handler`. The trade-off: `onclick` only supports one handler per element.\n- **Cascading nav-button failure**: A common symptom in WebView SPAs is that the chat button works but cloud-disk and settings buttons don't. The fix stack: (1) move event binding to top, (2) wrap IIFE in try-catch, (3) inline onclick, (4) event delegation, (5) touch-action CSS.\
 \
    **Technique 4 — Inline onclick in HTML (most reliable fallback):**\
    Add `onclick` directly to the HTML element so it fires regardless of JS binding timing:\
