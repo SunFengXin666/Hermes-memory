@@ -459,6 +459,60 @@ A common user mistake when filling server config: they enter the port of a diffe
         return resp
     ```
 
+### Silent JavaScript Failure: Entire Script Block Fails to Parse
+
+**The most insidious WebView bug:** A syntax error ANYWHERE in a `<script>` block causes the ENTIRE block to fail silently — no functions are registered, no error is visible in the UI. The page renders normally (HTML+CSS load fine), but ALL JavaScript (navigation, login, API calls) is dead. The only clue is that every `typeof x` returns `"undefined"`.
+
+**Common cause: prematurely closed template literal.** A backtick in the wrong place closes a multi-line template string early, making the next line's HTML tags parse as raw JavaScript:
+
+```javascript
+// ❌ BROKEN — backtick before the closing `</div>` closes the template early
+return `<div class="server-item" onclick="fn('${name}')">`
+        <div class="name">${item.name}</div>     // ← SyntaxError: 'class' unexpected
+      </div>`;
+
+// ✅ FIXED — no backtick until the actual end of the template
+return `<div class="server-item" onclick="fn('${name}')">
+        <div class="name">${item.name}</div>
+      </div>`;
+```
+
+**Detection pattern (server-side, no device needed):**
+1. Extract all `<script>` content from the HTML file
+2. Run each through Node.js syntax check: `node --check extracted.js`
+3. If any script block has a syntax error, the entire WebView JS runtime is dead — ALL your fixes (event delegation, inline onclick, CSS touch fixes) are irrelevant until this is fixed
+4. Landing page in a headless browser + `typeof switchPage` → `"undefined"` confirms the problem
+
+**Best defense: validate JS syntax as part of your build workflow:**
+```bash
+# Extract all JS from template and syntax-check
+python3 -c "
+import re
+with open('templates/index.html') as f:
+    html = f.read()
+scripts = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)
+for i, js in enumerate(scripts):
+    import tempfile, subprocess
+    with tempfile.NamedTemporaryFile(suffix='.js', mode='w', delete=False) as t:
+        t.write(js)
+    r = subprocess.run(['node', '--check', t.name], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f'SCRIPT BLOCK {i}: SYNTAX ERROR')
+        print(r.stderr)
+    else:
+        print(f'SCRIPT BLOCK {i}: OK')
+    import os; os.unlink(t.name)
+"
+```
+
+**Practical observability tip:** Query the app from the server with a headless browser (via CDP) and check if core functions are defined:
+```javascript
+typeof switchPage  // "undefined" → entire script block failed
+typeof userId       // "undefined" → confirms
+```
+
+No amount of inline `onclick`, event delegation, or touch-action CSS will fix a script that never parsed. **Always rule out syntax errors first when "buttons don't work" in a WebView.**
+
 ### Event Listener Registration Order in WebView SPA
 
 In a WebView SPA (single-page app with login → main interface flow), the order of JavaScript execution matters:
