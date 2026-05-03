@@ -642,7 +642,170 @@ document.getElementById('chat-send').disabled = false;
 - You want the app to function as an AI assistant frontend
 - You have a local Hermes Agent API server or any OpenAI-compatible endpoint
 
-**Troubleshooting AI chat in WebView:**
+### Mobile Network Blocking WebSocket: Switch to SSE (Server-Sent Events)
+
+**The problem:** WebSocket handshake (`ws://` upgrade request) may **time out** from mobile networks (4G/5G) to Chinese cloud servers (Tencent Cloud, Alibaba Cloud), even though regular HTTP works fine. The error looks like:
+```
+InvalidStateError: Failed to execute 'send' on 'WebSocket': Still in CONNECTING
+```
+The WebSocket `onopen` never fires. HTTP requests to the same server/port work normally.
+
+**Root cause:** Some mobile carriers, cloud security groups, or middleboxes block WebSocket upgrade packets or introduce latency that causes the handshake to time out. Cloud server security groups that allow HTTP traffic may still interfere with the `Connection: Upgrade` header negotiation.
+
+**Solution: Replace WebSocket with HTTP + SSE (Server-Sent Events).** SSE works over standard HTTP GET, uses the same port, and has built-in auto-reconnect in browsers via `EventSource`.
+
+#### Backend: Flask SSE Endpoint
+
+Replace `flask-sock` with a queue-based SSE generator:
+
+```python
+import queue, threading, json
+from flask import Response
+
+# Per-user message queues
+user_queues: dict[str, queue.Queue] = {}
+user_queues_lock = threading.Lock()
+
+# Login via HTTP POST (not WebSocket handshake)
+@app.route('/api/chat/login', methods=['POST'])
+def chat_login():
+    user_id = request.json['user_id']
+    with user_queues_lock:
+        user_queues.setdefault(user_id, queue.Queue())
+    return jsonify({'ok': True})
+
+# Send message via HTTP POST
+@app.route('/api/chat/send', methods=['POST'])
+def chat_send():
+    data = request.json
+    user_id = data['user_id']
+    text = data['text']
+    # Echo user's own message
+    own_q = user_queues.get(user_id)
+    if own_q:
+        own_q.put(json.dumps({
+            'type': 'message', 'from': user_id, 'text': text,
+            'time': data.get('time', ''), 'isSelf': True,
+        }))
+    # Call AI asynchronously
+    threading.Thread(target=call_ai, args=(user_id, text), daemon=True).start()
+    return jsonify({'ok': True})
+
+# SSE endpoint — long-lived GET
+@app.route('/api/chat/events')
+def chat_events():
+    user_id = request.args.get('user_id', '')
+    with user_queues_lock:
+        user_queues.setdefault(user_id, queue.Queue())
+        q = user_queues[user_id]
+    def generate():
+        while True:
+            try:
+                msg = q.get(timeout=30)  # Block until message arrives
+                yield f'data: {msg}\n\n'
+            except queue.Empty:
+                yield ': keepalive\n\n'  # SSE comment = keepalive (no-op)
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'})
+```
+
+Key points:
+- **`q.get(timeout=30)`** — blocks up to 30s waiting for a message, then sends keepalive to prevent proxy timeouts
+- **`': keepalive\\n\\n'`** — SSE comments are invisible to the client but keep the TCP connection alive
+- **Asynchronous AI calls** — run in a `threading.Thread` so the SSE generator isn't blocked by API latency
+- **No `flask-sock` or `simple-websocket` dependency** — SSE is built into Flask via the `Response` generator
+
+#### Frontend: JavaScript Changes
+
+Replace `new WebSocket(url)` with `new EventSource(url)`:
+
+```javascript
+let eventSource = null;
+
+function initChat() {
+  // Step 1: Login via HTTP
+  fetch('/api/chat/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({user_id: userId}),
+  }).then(r => r.json()).then(data => {
+    if (data.ok) {
+      document.getElementById('chat-input').disabled = false;
+      document.getElementById('chat-send').disabled = false;
+      // Step 2: Open SSE connection
+      connectSSE();
+    }
+  });
+}
+
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource(`/api/chat/events?user_id=${encodeURIComponent(userId)}`);
+
+  eventSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    handleSSEMessage(data);  // handle user_online, message, user_offline, etc.
+  };
+
+  eventSource.onerror = () => {
+    // Auto-reconnect after 5s (built-into EventSource, but we add custom delay)
+    setTimeout(() => connectSSE(), 5000);
+  };
+}
+
+function sendMessage() {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  fetch('/api/chat/send', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({user_id: userId, text, time: '...'}),
+  }).catch(e => { input.value = text; });  // restore on failure
+}
+```
+
+Key differences from WebSocket:
+- **No `onopen` check needed** — HTTP POST always works if the page loaded
+- **No `ws.readyState` guard** — SSE auto-reconnects on error; `fetch` calls are stateless
+- **No `onclose`** — `EventSource` handles reconnection internally
+- **Same message format** — SSE `data:` lines contain the same JSON you'd send over WebSocket
+
+#### When to Use SSE Instead of WebSocket
+
+- Users report "Still in CONNECTING" error on mobile networks
+- WebSocket handshake times out but page loads fine
+- App runs on Chinese cloud servers (TencentCloud, AlibabaCloud)
+- High packet loss or slow mobile connections
+- You want simpler transport with built-in reconnection
+
+#### Limitations of SSE
+
+- **Unidirectional** — Server→Client only. Client→Server must use HTTP POST (separate endpoint).
+- **Binary data** — SSE is text-only. For binary, use base64 encoding or separate upload endpoints.
+- **Browser support** — `EventSource` is supported in Android WebView since 4.4 (KitKat). For very old devices, add a polyfill.
+- **Max connections** — Most browsers allow ~6 SSE connections per domain. Fine for a single-user app.
+
+#### Testing SSE Locally
+
+```bash
+# 1. Login
+curl -s -X POST http://localhost:8080/api/chat/login \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"test"}'
+
+# 2. Open SSE stream (blocks, waiting for events)
+timeout 5 curl -s -N "http://localhost:8080/api/chat/events?user_id=test"
+
+# 3. In another terminal, send a message
+curl -s -X POST http://localhost:8080/api/chat/send \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"test","text":"你好"}'
+# SSE stream should show: data: {"type":"message","from":"test","text":"你好","isSelf":true}
+# Then: data: {"type":"message","from":"AI","text":"你好！","isSelf":false}
+```
+
+### Troubleshooting AI chat in WebView:
 - **Empty response / no messages appearing**: Check that the server's `ws.send()` is using `json.dumps()` (not string concatenation which can produce invalid JSON).
 - **WebSocket 500 error**: The AI API call threw an exception. Check server logs and test the API endpoint directly: `curl -s http://localhost:8642/v1/chat/completions -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"...","messages":[{"role":"user","content":"hi"}]}'`
 - **401 authentication error**: The API key is wrong or truncated. For Hermes API server, use the API_SERVER_KEY from `.env` file, not the LLM provider key.
