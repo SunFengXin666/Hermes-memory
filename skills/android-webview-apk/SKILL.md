@@ -427,6 +427,7 @@ async function reconnectServer(saved) {
 - Don't store sensitive credentials (passwords, API keys) in plaintext localStorage for production apps. For a personal/debug app behind WebView, it's acceptable.
 - Render the rendered list immediately after login so saved items appear without a reconnect attempt
 - Server-side sessions (SSH/SFTP) are **not** preserved across refresh — you must re-establish them on reconnect. The localStorage only preserves the **connection config**, not the connection itself.
+- **Login modal visibility**: Always start the modal hidden (`class="modal login-modal"` without `show`). The IIFE decides whether to `classList.add('show')` (new user) or init directly (returning user with saved localStorage). Never rely on `setTimeout(() => doLogin(), 100)` to auto-hide a visible modal — the 100ms gap creates a flash and any error during init leaves the modal stuck visible and unresponsive.
 
 **The 'wrong port' pitfall for SSH/SFTP in WebView apps:**
 A common user mistake when filling server config: they enter the port of a different service (e.g., Ollama port 11434, HTTP port 8080) instead of SSH port **22**. Always default the port input to `22` and consider adding a placeholder note like "SSH端口 (默认22)". If the connection times out, the first thing to check is the port number.
@@ -457,6 +458,41 @@ A common user mistake when filling server config: they enter the port of a diffe
         resp.headers['Expires'] = '0'
         return resp
     ```
+
+### Event Listener Registration Order in WebView SPA
+
+In a WebView SPA (single-page app with login → main interface flow), the order of JavaScript execution matters:
+
+**The bug:** If the auto-login IIFE (Immediately Invoked Function Expression) on page load calls functions that might throw (e.g., `renderServerList()` iterating over corrupted localStorage data, `connectWS()` failing), the thrown error halts script execution. Any event listeners registered *after* the IIFE in the source file never get bound — resulting in "buttons don't work" (navigation tabs, send button, etc. are unresponsive).
+
+**The fix: Bind navigation even listeners FIRST, before any fallible initialization code:**
+
+```javascript
+// 1. Bind event listeners FIRST — before any code that could throw
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    // switch tabs...
+  });
+});
+
+// 2. THEN run auto-init (wrapped in try-catch)
+try {
+  (function() {
+    const saved = localStorage.getItem('im_username');
+    if (saved) {
+      // auto-login...
+    }
+  })();
+} catch(e) {
+  console.error('Auto-init error:', e);
+  // Navigation still works despite init failure
+}
+```
+
+**Loading-order pitfalls:**
+- `window.onerror` handler must be defined *before* any functional code that might throw, otherwise errors are silently swallowed
+- Wrap IIFE auto-init in `try/catch` so a corrupted localStorage or broken init flow doesn't cascade into unclickable buttons
+- If the WebView shows a login modal that overlays the main UI, the modal's `show` class should be controlled by JavaScript (default hidden) rather than being present in the HTML `class` attribute — this prevents a flash of the login overlay on every page load
 
 ### Version Management for Iterative Delivery
 
