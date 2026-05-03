@@ -782,7 +782,134 @@ Key differences from WebSocket:
 - **No `onclose`** — `EventSource` handles reconnection internally
 - **Same message format** — SSE `data:` lines contain the same JSON you'd send over WebSocket
 
-#### When to Use SSE Instead of WebSocket
+### Server-Side Chat Message Persistence (across app restarts)
+
+When the user expects chat history to survive app closes/opens, store messages on the server:
+
+**Backend: JSONL file per user**
+
+```python
+# At module level
+CHAT_DIR = Path('/tmp/im-app-chat-history')
+CHAT_DIR.mkdir(parents=True, exist_ok=True)
+CHAT_LOCK = threading.Lock()
+
+def save_message(user_id: str, msg: dict):
+    file_path = CHAT_DIR / f'{user_id}.jsonl'
+    with CHAT_LOCK:
+        try:
+            with open(file_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(msg, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+
+def load_history(user_id: str) -> list[dict]:
+    file_path = CHAT_DIR / f'{user_id}.jsonl'
+    if not file_path.exists():
+        return []
+    with CHAT_LOCK:
+        try:
+            lines = file_path.read_text(encoding='utf-8').strip().split('\n')
+            return [json.loads(l) for l in lines if l.strip()]
+        except Exception:
+            return []
+```
+
+**Save messages after push_to_user()** in both the send endpoint and the AI callback:
+```python
+# In chat_send() — save user message
+save_message(user_id, {
+    'from': user_id, 'text': text,
+    'time': data.get('time', ''), 'isSelf': True,
+})
+
+# In call_ai() — save AI reply
+save_message(user_id, {
+    'from': 'AI', 'text': reply,
+    'time': '', 'isSelf': False,
+})
+```
+
+**Return history on login** (not via SSE — timing issue: login POST runs before SSE connects):
+```python
+@app.route('/api/chat/login', methods=['POST'])
+def chat_login():
+    # ... login logic ...
+    history = load_history(user_id)
+    return jsonify({'ok': True, 'users': users_snapshot, 'history': history})
+```
+
+**Frontend: render history from login response**:
+```javascript
+function initChat() {
+  fetch('/api/chat/login', {method:'POST', ...})
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        // Load saved history from login response
+        const el = document.getElementById('chat-messages');
+        el.innerHTML = '';
+        if (data.history && data.history.length) {
+          data.history.forEach(msg => {
+            appendMessage({from: msg.from, text: msg.text, time: msg.time, isSelf: msg.isSelf});
+          });
+        }
+        // Then connect SSE for real-time messages
+        connectSSE();
+      }
+    });
+}
+```
+
+**Key considerations:**
+- Use **JSONL format** (one JSON object per line) — append-only, no read-modify-write corruption from concurrent access
+- Use a `threading.Lock()` for thread-safe file writes (Flask's threaded=True)
+- Store in `/tmp/` for simplicity (lost on reboot) or a persistent path like `/var/lib/im-app/` for durability
+- Don't send history via SSE — the login HTTP POST runs before the SSE connection, so history would be pushed to an empty queue
+- Keep the file small (auto-prune by max lines or max age) to avoid slow login loads
+
+### Injecting Hermes Agent Memory into External AI Services
+
+When an external web app (Flask, running on same server) calls an AI model and you want the AI to know about the user's background from Hermes Agent persistent memory:
+
+**Read memory files on each new conversation** (not just at startup):
+
+```python
+from pathlib import Path
+
+def load_hermes_memories() -> str:
+    system_info = 'Your name is 友友, a friendly AI assistant. Answer in Chinese.'
+    try:
+        user_md = Path('/root/.hermes/memories/USER.md').read_text(encoding='utf-8')
+        memory_md = Path('/root/.hermes/memories/MEMORY.md').read_text(encoding='utf-8')
+        # Replace '§' separators with newlines for clean formatting
+        user_info = user_md.replace('§', '\n').strip()
+        sys_info = memory_md.replace('§', '\n').strip()
+        system_info += f'\n\nUser info:\n{user_info}\n\nEnvironment:\n{sys_info}'
+    except Exception:
+        pass
+    return system_info
+
+# Use when creating the system prompt for a new conversation:
+if user_id not in ai_memories:
+    system_prompt = load_hermes_memories()  # reloads files each time
+    ai_memories[user_id] = [
+        {'role': 'system', 'content': system_prompt},
+    ]
+```
+
+**Why reload on each conversation instead of once at startup:**
+- User may update memory files via `memory()` tool or GitHub sync between conversations
+- Memory files change frequently (skills, preferences, environment facts)
+- Reading two small text files is fast (<1ms, no network)
+
+**Memory file locations:**
+- `/root/.hermes/memories/USER.md` — user profile, preferences, personal details
+- `/root/.hermes/memories/MEMORY.md` — environment facts, project conventions, tool quirks
+
+**Paths are server-specific.** If running the Flask app on a different machine, the memory files won't exist. Only use this pattern when the Flask app runs on the same server as Hermes Agent.
+
+### When to use SSE Instead of WebSocket
 
 - Users report "Still in CONNECTING" error on mobile networks
 - WebSocket handshake times out but page loads fine
