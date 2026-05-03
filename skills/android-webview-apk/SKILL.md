@@ -1269,8 +1269,107 @@ The async pattern (return immediately, push SSE event on completion) is designed
 | Async (SSE notify) | Phone returns instantly | SSE may drop | User sees "uploading", must manually refresh |
 | Sync (wait for SFTP) | Blocks until done | Always accurate | User waits but sees definitive success |
 
-**Use sync when:** Files small (<10MB), SFTP on same VPC (fast), SSE unreliable (mobile 4G), user prefers "it's done" certainty.
-**Use async when:** Files large (100MB+), slow SFTP link, stable SSE connection (WiFi).
+**Use sync when:** Files small (<10MB), SFTP on same VPC (fast), SSE unreliable (mobile 4G), user prefers "it's done" certainty.  
+**Use async when:** Files large (100MB+), slow SFTP link, stable SSE connection (WiFi).  
+
+**Preferred UX for mobile WebView with unreliable SSE: Sync upload + indeterminate progress bar**  
+
+```html
+<!-- Upload modal with progress bar (hidden by default) -->
+<div class="modal" id="upload-modal">
+  <div class="modal-box">
+    <h3>上传文件</h3>
+    <input type="file" id="upload-file">
+    <div class="upload-progress" id="upload-progress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+      <div class="progress-text" id="progress-text">正在传输到远程服务器...</div>
+    </div>
+    <div class="modal-actions" id="upload-actions">
+      <button class="btn-cancel" onclick="closeModal('upload-modal')">取消</button>
+      <button class="btn-confirm" onclick="doUpload()">上传</button>
+    </div>
+  </div>
+</div>
+```
+
+```css
+/* Indeterminate animated progress bar */
+.upload-progress{margin:12px 0;text-align:center}
+.progress-bar{width:100%;height:6px;background:#e3e5e8;border-radius:3px;overflow:hidden}
+.progress-fill{width:30%;height:100%;background:#5865f2;border-radius:3px;animation:progress-indeterminate 1.5s ease-in-out infinite}
+@keyframes progress-indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
+.progress-text{font-size:12px;color:#80848e;margin-top:6px}
+```
+
+```javascript
+async function doUpload() {
+  const file = document.getElementById('upload-file').files[0];
+  if (!file) return;
+
+  // Hide action buttons, show progress bar
+  document.getElementById('upload-progress').style.display = 'block';
+  document.getElementById('upload-actions').style.display = 'none';
+  document.getElementById('progress-text').textContent =
+    `正在传输 ${file.name} 到远程服务器...`;
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('path', currentDiskPath);
+
+  try {
+    const resp = await fetch(`/api/disks/${serverId}/upload`, {
+      method: 'POST', body: formData
+    });
+    const result = await resp.json();
+    if (!result.ok) {
+      document.getElementById('upload-progress').style.display = 'none';
+      document.getElementById('upload-actions').style.display = 'flex';
+      toast('❌ ' + result.error);
+      return;
+    }
+    closeModal('upload-modal');
+    toast('✅ 上传成功');
+    diskRefresh();  // reload file list
+  } catch(e) {
+    // Revert to buttons on error
+    document.getElementById('upload-progress').style.display = 'none';
+    document.getElementById('upload-actions').style.display = 'flex';
+    toast('❌ 上传失败: ' + e.message);
+  }
+}
+```
+
+**Backend — synchronous SFTP (no background thread):**
+
+```python
+@app.route('/api/disks/<conn_id>/upload', methods=['POST'])
+def disk_upload(conn_id):
+    conn = sftp_connections.get(conn_id)
+    if not conn:
+        return jsonify({'ok': False, 'error': '连接已断开'}), 404
+    dest_dir = request.form.get('path', '/')
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'ok': False, 'error': '没有文件'}), 400
+    try:
+        local_tmp = UPLOAD_DIR / f"ul_{uuid.uuid4().hex[:12]}_{file.filename}"
+        file.save(str(local_tmp))
+        # Synchronous SFTP — blocks HTTP response until upload completes
+        sftp = conn['sftp']
+        remote_path = os.path.join(dest_dir, file.filename).replace('\\', '/')
+        sftp.put(str(local_tmp), remote_path)
+        local_tmp.unlink(missing_ok=True)
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+```
+
+**Why this beats async + SSE on mobile:**  
+- The HTTP request stays open until the SFTP transfer finishes, so the user sees a continuous progress animation  
+- No reliance on SSE (which frequently drops on Chinese 4G/5G)  
+- The server doesn't need to track pending uploads or push notifications  
+- The frontend gets a definitive success/failure in one round trip  
+- Downside: HTTP request may timeout for very large files (>100MB) over slow SFTP links — use the async pattern for those cases
 
 **Why `<a>` click instead of `window.open` or `fetch` + blob:**
 - `window.open` is blocked by most WebViews (popup blocker)
