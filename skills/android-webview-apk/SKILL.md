@@ -332,33 +332,56 @@ $GRADLE_HOME/bin/gradle assembleDebug --no-daemon
 # APK at: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### 8. Send APK to User (via QQ Bot)
+### 8. Send APK to User (via NapCat QQ Bot)
+
+**Option A: shared volume (preferred)** — Copy APK to NapCat's config volume, which is accessible inside the container:
 
 ```bash
-# Copy into NapCat container if needed
-docker cp /path/to/app-debug.apk napcatf:/root/myapp.apk
+# Check mounted volumes first:
+docker inspect napcat --format '{{json .Mounts}}' | python3 -c \
+  "import sys,json;[print(m['Source'],'->',m['Destination']) for m in json.load(sys.stdin)]"
 
-# Send via NapCat WebSocket API
-node -e "
-const WebSocket = require('ws');
-const ws = new WebSocket('ws://127.0.0.1:3001');
-ws.on('open', () => {
-  ws.send(JSON.stringify({
-    action: 'send_private_msg',
-    params: {
-      user_id: USERS_QQ_NUMBER,
-      message: [
-        { type: 'text', data: { text: 'Your APK is ready' } },
-        { type: 'file', data: { file: '/root/myapp.apk' } }
-      ]
-    },
-    echo: 'send'
-  }));
-});
-ws.on('message', (d) => { console.log(d.toString()); ws.close(); });
-setTimeout(() => process.exit(0), 8000);
-"
+# Common mount: /root/napcat_config -> /app/napcat/config (varies per setup)
+cp /path/to/app-debug.apk /root/napcat_config/myapp-v1.1.apk
 ```
+
+**Option B: docker cp** — Copy directly into the container:
+
+```bash
+docker cp /path/to/app-debug.apk napcatf:/root/myapp.apk
+```
+
+Then send via NapCat WebSocket API (port 3001 typically has no token; port 6099 may require a token from `passkey.json`):
+
+```javascript
+// save as /opt/napcat/send_apk.js, then: node /opt/napcat/send_apk.js
+import { WebSocket } from 'ws';
+
+const ws = new WebSocket('ws://127.0.0.1:3001');  // or 6099?access_token=xxx
+
+ws.on('open', () => {
+  setTimeout(() => {
+    ws.send(JSON.stringify({
+      action: 'send_private_msg',
+      params: {
+        user_id: USERS_QQ_NUMBER,  // e.g. 3240171077
+        message: [
+          { type: 'text', data: { text: '📦 v1.1 APK ready' } },
+          { type: 'file', data: { file: '/app/napcat/config/myapp-v1.1.apk' } }
+          // Path inside container — use shared volume path or docker cp path
+        ]
+      },
+      echo: 'send_apk'
+    }));
+  }, 500);  // Wait for lifecycle event to be consumed first
+});
+
+ws.on('message', (data) => console.log('Response:', data.toString()));
+ws.on('error', (err) => console.error('Error:', err.message));
+setTimeout(() => process.exit(0), 8000);
+```
+
+Check NapCat config (`/root/napcat_config/onebot11.json` or `onebot11_<botid>.json`) for the correct WebSocket port and token setting.
 
 ### localStorage Persistence Pattern for Config Data
 
