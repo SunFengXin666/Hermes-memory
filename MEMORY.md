@@ -11,3 +11,5 @@ Remote server 81.70.229.222 (Tencent Cloud), Ubuntu 24.04, user: ubuntu. Has Oll
 Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/android-sdk (platform 34), Gradle 8.5 /opt/gradle/gradle-8.5. IM+云盘 project at /root/im-app/ (Flask), Android project at /root/im-app-android/. APK at /root/im-app.apk.
 §
 User's IM+Cloud Android app project at /root/im-app/ (Flask backend + HTML/JS frontend) and /root/im-app-android/ (Android WebView APK wrapper). Run Flask: cd /root/im-app && python3 app.py --host 0.0.0.0 --port 8080. Build APK: set env JAVA_HOME/ANDROID_HOME/GRADLE_HOME, cd /root/im-app-android && gradle assembleDebug --no-daemon. APK at app/build/outputs/apk/debug/app-debug.apk.
+§
+IM+云盘 app (Flask, /root/im-app/): SFTP 到远程服务器需要 set_keepalive(15) 否则连接闲置后被踢掉导致 "Socket is closed"。上传必须用异步（后台线程） + 前端轮询目录等文件出现，同步 SFTP put 会挂住。轮询间隔 2 秒，超时 80 秒。
