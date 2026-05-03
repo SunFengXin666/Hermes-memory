@@ -224,8 +224,11 @@ public class MainActivity extends AppCompatActivity {
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
-        s.setLoadWithOverviewMode(true);
-        s.setUseWideViewPort(true);
+        // IMPORTANT: If your web app uses responsive/mobile-first CSS (media queries),
+        // set setUseWideViewPort(false) so the WebView reports actual device width.
+        // setUseWideViewPort(true) makes the WebView report ~980px, breaking mobile CSS.
+        // For desktop-targeted web apps, setUseWideViewPort(true) may be fine.
+        s.setUseWideViewPort(false);
         s.setBuiltInZoomControls(true);
         s.setDisplayZoomControls(false);
         s.setUserAgentString(s.getUserAgentString() + " MyApp-Android/1.0");
@@ -367,6 +370,7 @@ setTimeout(() => process.exit(0), 8000);
 6. **Cleartext traffic** — Android 9+ blocks HTTP by default. Set `android:usesCleartextTraffic="true"` in manifest AND provide `network_security_config.xml`.
 7. **Gradle daemon conflict** — Kill old daemons (`pkill -f GradleDaemon`) before restarting a failed build. Stale daemons hold port locks.
 8. **Maven/Google proxy** — Gradle needs to reach `dl.google.com` and `repo1.maven.org`. If proxy is required, set `GRADLE_OPTS` with `-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=7890` or configure in `gradle.properties`.
+9. **WebView wide viewport breaks mobile CSS** — `setUseWideViewPort(true)` (the Android default) makes the WebView report ~980px CSS width, so `@media(max-width:600px)` media queries never trigger. For mobile-responsive web apps, set `setUseWideViewPort(false)` so the WebView reports actual device pixels. Design the web app with mobile-first CSS (default = phone layout, `@media(min-width:768px)` = desktop) so it always renders correctly regardless of viewport configuration.
 
 ## Verification
 
