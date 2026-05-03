@@ -4,8 +4,6 @@ Chinese-speaking user (conversations in Chinese). Runs Hermes Agent on a Tencent
 §
 User demands extremely concise responses — every character costs money (QQ bot message costs). No pleasantries, no fluff, get straight to the point.
 §
-User wants image analysis/vision capability. Gemini API keys had quota exhausted (limit: 0 on free tier). Groq has no vision models (all deprecated). Currently considering OpenRouter as alternative for free vision models.
-§
 用户QQ号：3240171077。可通过NapCat QQ Bot发消息到该QQ（ws://127.0.0.1:3001，send_private_msg）。
 §
 QQ用户，番茄作家网(fanqienovel.com)作者，手机号15601447368。需登录后台管理章节。
