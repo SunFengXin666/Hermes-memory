@@ -12,4 +12,4 @@ Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/androi
 §
 User's IM+Cloud Android app project at /root/im-app/ (Flask backend + HTML/JS frontend) and /root/im-app-android/ (Android WebView APK wrapper). Run Flask: cd /root/im-app && python3 app.py --host 0.0.0.0 --port 8080. Build APK: set env JAVA_HOME/ANDROID_HOME/GRADLE_HOME, cd /root/im-app-android && gradle assembleDebug --no-daemon. APK at app/build/outputs/apk/debug/app-debug.apk.
 §
-IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防断开。Android WebView文件选择必须用透明覆盖层——JS触发hidden input无效。Flask端口8080。
+IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防断开。Android WebView文件选择必须用`<label>`包裹`<input type=file>`——JS触发`.click()`/透明覆盖层均无效。Vision用MiMo `mimo-v2-omni` @ token-plan-cn.xiaomimimo.com/v1。Flask端口8080。Hermes API代理(localhost:8642)模型名必须用`hermes-agent`。

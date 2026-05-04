@@ -1,4 +1,4 @@
-User communicates primarily in Chinese (zh-CN). They use Tencent Cloud (腾讯云) servers with security groups that block inbound ports by default. Their server has limited external network access (ghcr.io and Docker Hub connections time out frequently).
+Chinese-speaking Android app dev. Extremely concise—no fluff, no choices. Expects direct fixes. QQ user 3240171077. 番茄小说作者(恰逢787)。IM+Cloud Disk app author.
 §
 Chinese-speaking user (conversations in Chinese). Runs Hermes Agent on a Tencent Cloud server (49.232.224.90, ap-beijing). Has QQ Bot bound to Hermes (app_id 1903820137). Uses SSH for server management. Has both Flask web panel (port 3000) and official Hermes Dashboard (port 9119) deployed.
 §
