@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#5865f2">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<title>友友云盘</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f7;height:100vh;overflow:hidden;color:#1d1d1f}
+.app{display:flex;flex-direction:column;height:100vh;background:#fff}
+
+/* ─── Bottom Tab Bar ─── */
+.sidebar{width:100%;display:flex;flex-direction:row;align-items:center;position:fixed;bottom:0;left:0;right:0;z-index:100;height:50px;padding:0;background:#fafafa;border-top:1px solid #e5e5ea;flex-shrink:0}
+.sidebar .logo,.sidebar-spacer,.sidebar .user-avatar{display:none}
+.nav-btn{width:auto;flex:1;height:50px;margin:0;border:none;background:transparent;color:#8e8e93;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .1s;touch-action:manipulation;-webkit-tap-highlight-color:transparent;flex-direction:column;gap:2px;font-size:12px}
+.nav-btn .icon{font-size:22px;line-height:1}
+.nav-btn.active{color:#007aff}
+.nav-btn:active{opacity:.6}
+.nav-label{font-size:10px;margin-top:1px}
+
+/* ─── Main ─── */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding-bottom:50px;height:100vh}
+.page{display:none;flex:1;flex-direction:column;height:100%;min-height:0}
+.page.active{display:flex}
+
+/* ─── Chat Page ─── */
+.chat-area{flex:1;display:flex;flex-direction:column;background:#fff;min-height:0}
+.chat-area .chat-header{padding:14px 16px 12px;font-size:17px;font-weight:600;color:#1d1d1f;text-align:center;border-bottom:1px solid #e5e5ea;background:#fff}
+.chat-messages{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.msg{max-width:80%;padding:10px 14px;border-radius:18px;font-size:15px;line-height:1.5;word-break:break-word}
+.msg.self{background:#007aff;color:#fff;align-self:flex-end;border-bottom-right-radius:6px}
+.msg.other{background:#f0f0f0;color:#1d1d1f;align-self:flex-start;border-bottom-left-radius:6px}
+.msg .time{font-size:11px;opacity:.6;margin-top:4px}
+.msg.self .time{text-align:right}
+.chat-input-area{display:flex;gap:8px;padding:8px 12px;padding-bottom:max(8px,env(safe-area-inset-bottom,8px));border-top:1px solid #e5e5ea;background:#fff}
+.chat-input-area input{flex:1;padding:10px 16px;border:1px solid #e5e5ea;border-radius:20px;outline:none;font-size:15px;background:#f5f5f7}
+.chat-input-area input:focus{border-color:#007aff;background:#fff}
+.chat-input-area button{width:40px;height:40px;border:none;border-radius:50%;background:#007aff;color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.chat-input-area button:active{background:#0062cc}
+
+/* ─── Disk Page ─── */
+.disk-layout{display:flex;flex:1;overflow:hidden;flex-direction:column}
+.disk-header{padding:14px 16px 10px;background:#fff;border-bottom:1px solid #e5e5ea}
+.disk-header .server-info{display:flex;align-items:center;justify-content:space-between}
+.disk-header .server-name{font-size:15px;font-weight:600;color:#1d1d1f}
+.disk-header .server-status{font-size:12px;color:#34c759}
+.disk-header .server-status.offline{color:#8e8e93}
+.disk-header .add-btn{padding:4px 12px;background:#007aff;color:#fff;border:none;border-radius:14px;font-size:12px;cursor:pointer}
+.disk-header .path{font-size:12px;color:#8e8e93;margin-top:6px}
+.disk-toolbar{padding:8px 12px;display:flex;align-items:center;gap:6px;background:#fff;border-bottom:1px solid #e5e5ea}
+.disk-toolbar button{padding:6px 12px;border:1px solid #e5e5ea;border-radius:8px;background:#fff;cursor:pointer;font-size:12px;color:#007aff;display:flex;align-items:center;gap:4px;transition:background .1s}
+.disk-toolbar button:active{background:#f0f0f0}
+.disk-files{flex:1;overflow-y:auto;padding:0;background:#fff}
+.file-item{padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #f2f2f2}
+.file-item .icon{font-size:20px;width:28px;text-align:center;flex-shrink:0}
+.file-item .info{flex:1;min-width:0}
+.file-item .name{font-size:14px;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-item .meta{font-size:11px;color:#8e8e93;margin-top:3px}
+.file-item .actions{display:flex;gap:6px}
+.file-item .actions button{padding:4px 10px;border:none;border-radius:6px;background:#f5f5f7;cursor:pointer;font-size:12px;color:#007aff}
+.file-item .actions button:active{background:#e5e5ea}
+.file-item .actions button.del{color:#ff3b30}
+.disk-empty{padding:60px 16px;text-align:center;color:#8e8e93;font-size:14px}
+
+/* ─── Storage Bar ─── */
+.storage-bar-wrap{margin-top:10px;display:flex;align-items:center;gap:8px}
+.storage-bar{flex:1;height:4px;background:#e5e5ea;border-radius:2px;overflow:hidden}
+.storage-fill{height:100%;background:#34c759;border-radius:2px;transition:width .5s ease}
+.storage-text{font-size:11px;color:#8e8e93;white-space:nowrap}
+
+/* ─── Servers List (in a modal-like drawer) ─── */
+.server-list-wrap{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:200;align-items:flex-end}
+.server-list-wrap.show{display:flex}
+.server-list-drawer{background:#fff;border-radius:14px 14px 0 0;padding:16px 0;max-height:60%;overflow-y:auto;width:100%}
+.server-list-drawer .drawer-handle{width:36px;height:4px;background:#d1d1d6;border-radius:2px;margin:0 auto 12px}
+.server-list-drawer .drawer-title{font-size:15px;font-weight:600;color:#1d1d1f;padding:0 16px 10px}
+.server-item{padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f2f2f2;cursor:pointer}
+.server-item:active{background:#f5f5f7}
+.server-item .dot{width:8px;height:8px;border-radius:50%;background:#34c759;flex-shrink:0}
+.server-item .dot.offline{background:#d1d1d6}
+.server-item .srv-name{font-size:14px;color:#1d1d1f;flex:1}
+.server-item .srv-status{font-size:11px;color:#8e8e93}
+.server-item .srv-status.online{color:#34c759}
+.server-list-footer{padding:12px 16px}
+.server-list-footer button{width:100%;padding:10px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:14px;cursor:pointer}
+.server-list-footer button:active{background:#0062cc}
+
+/* ─── Settings Page ─── */
+.settings{padding:24px 20px}
+.settings h2{font-size:20px;font-weight:700;margin-bottom:20px;color:#1d1d1f}
+.settings .field{margin-bottom:16px}
+.settings label{display:block;font-size:13px;color:#8e8e93;margin-bottom:5px;font-weight:500}
+.settings input{width:100%;padding:10px 14px;border:1px solid #e5e5ea;border-radius:10px;font-size:15px;outline:none;background:#f5f5f7}
+.settings input:focus{border-color:#007aff;background:#fff}
+.settings textarea:focus{border-color:#007aff;background:#fff}
+.settings .btn-primary{background:#007aff;color:#fff;border:none;padding:12px 24px;border-radius:10px;font-size:15px;cursor:pointer;font-weight:500;width:100%}
+.settings .btn-primary:active{background:#0062cc}
+.settings .info{margin-top:20px;padding:14px 16px;background:#f5f5f7;border-radius:10px;font-size:13px;color:#8e8e93;line-height:1.6}
+.settings .info strong{color:#1d1d1f}
+
+/* ─── Modals ─── */
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:999;align-items:center;justify-content:center}
+.modal.show{display:flex}
+.modal-box{background:#fff;border-radius:14px;padding:24px;width:300px;max-width:88vw;box-shadow:0 8px 40px rgba(0,0,0,.12)}
+.modal-box h3{font-size:17px;font-weight:600;margin-bottom:16px;color:#1d1d1f}
+.modal-box input{width:100%;padding:10px 14px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;outline:none;margin-bottom:10px;background:#f5f5f7}
+.modal-box input:focus{border-color:#007aff;background:#fff}
+.modal-box label{display:block;font-size:12px;color:#8e8e93;margin-bottom:4px}
+.modal-box .field{margin-bottom:12px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.modal-actions button{padding:8px 18px;border-radius:10px;font-size:14px;cursor:pointer;font-weight:500}
+.btn-cancel{background:#f5f5f7;border:none;color:#8e8e93}
+.btn-confirm{background:#007aff;border:none;color:#fff}
+
+/* ─── Upload File Picker ─── */
+.upload-picker{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f5f5f7;border-radius:10px;margin-bottom:4px}
+.upload-picker .picker-btn{padding:6px 14px;background:#007aff;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap}
+.upload-picker .file-name{font-size:13px;color:#8e8e93;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ─── Upload Progress ─── */
+.upload-progress{margin:12px 0;text-align:center}
+.progress-bar{width:100%;height:4px;background:#e5e5ea;border-radius:2px;overflow:hidden}
+.progress-fill{width:30%;height:100%;background:#007aff;border-radius:2px;animation:progress-indeterminate 1.5s ease-in-out infinite}
+@keyframes progress-indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
+.progress-text{font-size:12px;color:#8e8e93;margin-top:8px}
+
+/* ─── Login ─── */
+.login-modal .modal-box{text-align:center;padding:32px 24px}
+.login-modal .modal-box h2{color:#007aff;font-size:24px;margin-bottom:4px}
+.login-modal .modal-box p{color:#8e8e93;font-size:14px;margin-bottom:20px}
+.login-modal input{text-align:center}
+
+/* ─── Toast ─── */
+.toast{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;z-index:1000;opacity:0;transition:opacity .25s;white-space:nowrap;backdrop-filter:blur(10px)}
+.toast.show{opacity:1}
+
+/* ─── Desktop/Tablet ─── */
+@media(min-width:768px){
+  .app{flex-direction:row;max-width:900px;margin:0 auto;box-shadow:0 0 20px rgba(0,0,0,.06);height:100vh;border-radius:0}
+  .sidebar{width:68px;flex-direction:column;position:static;height:auto;padding:16px 0;gap:4px;border-top:none;border-right:1px solid #e5e5ea}
+  .sidebar .logo{display:flex;width:40px;height:40px;background:#007aff;border-radius:10px;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:600;margin:0 auto 20px}
+  .sidebar-spacer{display:block;flex:1}
+  .sidebar .user-avatar{display:flex;width:36px;height:36px;border-radius:50%;background:#007aff;align-items:center;justify-content:center;color:#fff;font-weight:600;font-size:16px;cursor:pointer;margin:0 auto 8px}
+  .nav-btn{width:48px;height:48px;border-radius:10px;margin:2px auto;font-size:20px}
+  .nav-btn .nav-label{display:none}
+  .nav-btn.active{background:#e8f0ff;border-top:none;color:#007aff}
+  .main{padding-bottom:0;height:auto}
+  .chat-area .chat-header{padding:16px 20px;font-size:15px}
+  .chat-messages{padding:16px 20px}
+  .msg{padding:10px 16px;font-size:15px}
+  .chat-input-area{padding:12px 20px}
+  .chat-input-area input{padding:10px 16px;font-size:15px}
+  .disk-header{padding:16px 20px}
+  .disk-header .server-name{font-size:15px}
+  .disk-toolbar{padding:10px 20px;gap:8px}
+  .disk-toolbar button{padding:6px 14px;font-size:13px}
+  .disk-files{padding:4px 0}
+  .file-item{padding:12px 20px}
+  .settings{padding:30px 40px;max-width:500px}
+  .toast{bottom:24px;left:auto;right:24px;transform:none}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="logo">YY</div>
+    <button class="nav-btn active" data-page="chat" onclick="switchPage('chat')">
+      <span class="icon">💬</span><span class="nav-label">聊天</span>
+    </button>
+    <button class="nav-btn" data-page="disk" onclick="switchPage('disk')">
+      <span class="icon">☁️</span><span class="nav-label">云盘</span>
+    </button>
+    <button class="nav-btn" data-page="settings" onclick="switchPage('settings')">
+      <span class="icon">⚙️</span><span class="nav-label">设置</span>
+    </button>
+    <div class="sidebar-spacer"></div>
+    <div class="user-avatar" id="sidebar-avatar">?</div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <!-- Chat Page -->
+    <div class="page active" id="page-chat">
+      <div class="chat-area">
+        <div class="chat-header" id="chat-header" style="display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer" onclick="switchAiModel()">
+          💬 <span id="ai-name-display">友友</span> <span style="font-size:12px;color:#8e8e93">▾</span>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+          <div style="text-align:center;padding:40px 20px;color:#8e8e93;font-size:14px">发送消息开始聊天</div>
+        </div>
+        <div class="chat-input-area">
+          <input type="text" id="chat-input" placeholder="输入消息..." disabled>
+          <button id="chat-send" disabled>➤</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cloud Disk Page -->
+    <div class="page" id="page-disk">
+      <div class="disk-layout">
+        <!-- Replace old server list with a cleaner inline header -->
+        <div class="disk-header">
+          <div class="server-info">
+            <span class="server-name" id="disk-server-name">未连接</span>
+            <button class="add-btn" onclick="showServerList()">切换</button>
+          </div>
+          <div class="path" id="current-path">/home/ubuntu/yunpan</div>
+          <div class="storage-bar-wrap" id="storage-bar-wrap" style="display:none">
+            <div class="storage-bar"><div class="storage-fill" id="storage-fill"></div></div>
+            <div class="storage-text" id="storage-text">0 / 20 GB</div>
+          </div>
+        </div>
+        <div class="disk-toolbar">
+          <button onclick="diskGoBack()">⬆ 上级</button>
+          <button onclick="diskUpload()">⬆ 上传</button>
+          <button onclick="diskMkdir()">📁 新建</button>
+          <button onclick="diskRefresh()">🔄 刷新</button>
+        </div>
+        <div class="disk-files" id="disk-files">
+          <div class="disk-empty">点右上角「切换」连接服务器</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Page -->
+    <div class="page" id="page-settings">
+      <div class="settings">
+        <h2>⚙️ 设置</h2>
+        <div class="field">
+          <label>我的昵称</label>
+          <input type="text" id="setting-nickname" placeholder="输入昵称...">
+        </div>
+        <div class="field" style="margin-top:20px">
+          <label style="font-size:14px;font-weight:600;color:#1d1d1f">🤖 AI 模型</label>
+          <p style="font-size:12px;color:#8e8e93;margin-bottom:6px">当前：<span id="setting-ai-name">友友</span></p>
+          <button class="btn-primary" onclick="showAiConfigEditor()" style="background:#f5f5f7;color:#007aff;font-weight:500;border:1px solid #e5e5ea">✎ 管理AI模型</button>
+        </div>
+        <div class="field" style="margin-top:20px">
+          <label style="font-size:14px;font-weight:600;color:#1d1d1f">🧠 我的记忆</label>
+          <p style="font-size:12px;color:#8e8e93;margin-bottom:6px">告诉AI关于你的事，它会记住</p>
+          <textarea id="memory-text" style="width:100%;height:80px;padding:10px 14px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;outline:none;background:#f5f5f7;resize:vertical;font-family:inherit" placeholder="比如：我喜欢Python，养了一只猫叫咪咪..."></textarea>
+        </div>
+        <div class="info">
+          <strong>友友云盘</strong><br>
+          AI 聊天 + 远程文件管理<br>
+          服务器：<span id="info-port">8080</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Server List Drawer -->
+<div class="server-list-wrap" id="server-drawer">
+  <div class="server-list-drawer">
+    <div class="drawer-handle"></div>
+    <div class="drawer-title">服务器</div>
+    <div id="server-list"></div>
+    <div class="server-list-footer">
+      <button onclick="closeDrawer();showAddServer()">+ 添加服务器</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Server Modal -->
+<div class="modal" id="server-modal">
+  <div class="modal-box">
+    <h3>添加服务器</h3>
+    <div class="field"><label>连接名</label><input type="text" id="srv-name" placeholder="我的服务器"></div>
+    <div class="field"><label>主机地址</label><input type="text" id="srv-host" placeholder="192.168.1.100"></div>
+    <div class="field"><label>端口</label><input type="number" id="srv-port" value="22"></div>
+    <div class="field"><label>用户名</label><input type="text" id="srv-user" placeholder="root"></div>
+    <div class="field"><label>密码</label><input type="password" id="srv-pass" placeholder="密码或留空用密钥"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('server-modal')">取消</button>
+      <button class="btn-confirm" onclick="connectServer()">连接</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal" id="upload-modal">
+  <div class="modal-box">
+    <h3>上传文件</h3>
+    <div class="upload-picker">
+      <button class="picker-btn" onclick="document.getElementById('upload-file').click()">选择文件</button>
+      <span class="file-name" id="upload-file-name">未选择任何文件</span>
+    </div>
+    <input type="file" id="upload-file" style="display:none" onchange="document.getElementById('upload-file-name').textContent=this.files[0]?.name||'未选择任何文件'">
+    <div class="upload-progress" id="upload-progress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+      <div class="progress-text" id="progress-text">正在传输到远程服务器...</div>
+    </div>
+    <div class="modal-actions" id="upload-actions">
+      <button class="btn-cancel" onclick="closeModal('upload-modal')">取消</button>
+      <button class="btn-confirm" onclick="doUpload()">上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Folder Modal -->
+<div class="modal" id="mkdir-modal">
+  <div class="modal-box">
+    <h3>新建文件夹</h3>
+    <input type="text" id="mkdir-name" placeholder="文件夹名称">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('mkdir-modal')">取消</button>
+      <button class="btn-confirm" onclick="doMkdir()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="modal" id="confirm-modal">
+  <div class="modal-box" style="text-align:center">
+    <div style="font-size:36px;margin-bottom:8px" id="confirm-icon">🗑</div>
+    <h3 style="margin-bottom:4px" id="confirm-title">确认删除</h3>
+    <p style="font-size:14px;color:#8e8e93;line-height:1.5;margin-bottom:4px" id="confirm-msg">确定要删除吗？</p>
+    <div class="modal-actions" style="justify-content:center;gap:12px;margin-top:16px">
+      <button class="btn-cancel" onclick="closeModal('confirm-modal')" style="padding:10px 28px;border-radius:10px">取消</button>
+      <button class="btn-confirm" id="confirm-btn" onclick="closeModal('confirm-modal');" style="padding:10px 28px;border-radius:10px;background:#ff3b30">删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- Login Modal -->
+<div class="modal login-modal" id="login-modal">
+  <div class="modal-box">
+    <h2>💬 友友云盘</h2>
+    <p>AI 聊天 + 远程文件管理</p>
+    <input type="text" id="login-name" placeholder="用户名">
+    <input type="password" id="login-password" placeholder="密码">
+    <div class="modal-actions" style="justify-content:center;flex-direction:column;gap:8px">
+      <button class="btn-confirm" onclick="doLogin()" style="padding:10px 40px;font-size:15px;width:100%">登录</button>
+      <button onclick="doRegister()" style="padding:8px;background:none;border:none;color:#007aff;font-size:14px;cursor:pointer">注册新账号</button>
+    </div>
+  </div>
+</div>
+
+<!-- AI Config Editor Modal -->
+<div class="modal" id="ai-config-modal">
+  <div class="modal-box" style="max-height:80vh;overflow-y:auto">
+    <h3 style="display:flex;align-items:center;justify-content:space-between">
+      <span>🤖 AI 模型</span>
+      <span style="font-size:12px;color:#8e8e93;font-weight:400" id="ai-editor-current">当前：友友</span>
+    </h3>
+    <div id="ai-config-list"></div>
+    <button class="btn-primary" onclick="addAiConfig()" style="margin-top:8px;background:#f5f5f7;color:#007aff;font-weight:500;border:1px solid #e5e5ea">+ 添加模型</button>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-cancel" onclick="closeModal('ai-config-modal')">取消</button>
+      <button class="btn-confirm" onclick="saveAiConfigEditor()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══ STATE ═══
+let userId = '';
+let connectedServers = {};
+let savedServers = JSON.parse(localStorage.getItem('im_servers') || '[]');
+let activeServerId = null;
+let currentDiskPath = '/home/ubuntu/yunpan';
+let basePath = '/home/ubuntu/yunpan';
+let uploading = false;
+let eventSource = null;
+let sseReconnectTimer = null;
+let aiPresets = [];
+let aiActiveIdx = 0;
+
+// ═══ NAVIGATION ═══
+function switchPage(name) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.querySelector(`.nav-btn[data-page="${name}"]`);
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.page').forEach(p => { p.classList.remove('active'); p.style.display = 'none'; });
+  const page = document.getElementById('page-' + name);
+  if (page) { page.classList.add('active'); page.style.display = 'flex'; }
+  if (name === 'settings') { renderAiConfigs(); loadMemory(); }
+  if (name === 'chat') loadAiConfigs();
+}
+document.querySelector('.sidebar').addEventListener('click', function(e) {
+  const btn = e.target.closest('.nav-btn');
+  if (!btn) return;
+  switchPage(btn.dataset.page);
+});
+
+// ═══ LOGIN ═══
+window.onerror = function(msg, url, line) { toast('⚠️ ' + msg); };
+
+// Auto-login with saved token or show login modal
+(function() {
+  const saved = localStorage.getItem('im_auth');
+  if (saved) {
+    try {
+      const auth = JSON.parse(saved);
+      if (auth.username && auth.token) {
+        autoLogin(auth.username, auth.token);
+        return;
+      }
+    } catch(_) {}
+  }
+  document.getElementById('login-modal').classList.add('show');
+})();
+
+async function autoLogin(username, token) {
+  try {
+    const resp = await fetch('/api/auth/token_login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, token}),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      await onAuthSuccess(username, data.profile, token);
+    } else {
+      localStorage.removeItem('im_auth');
+      document.getElementById('login-modal').classList.add('show');
+    }
+  } catch(e) {
+    document.getElementById('login-modal').classList.add('show');
+  }
+}
+
+async function doLogin() {
+  const name = document.getElementById('login-name').value.trim();
+  const password = document.getElementById('login-password').value;
+  if (!name) { toast('请输入用户名'); return; }
+  if (!password) { toast('请输入密码'); return; }
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: name, password: password}),
+    });
+    const data = await resp.json();
+    if (!data.ok) { toast(data.error || '登录失败'); return; }
+    await onAuthSuccess(name, data.profile, data.token);
+  } catch(e) { toast('登录失败: ' + e.message); }
+}
+
+async function doRegister() {
+  const name = document.getElementById('login-name').value.trim();
+  const password = document.getElementById('login-password').value;
+  if (!name) { toast('请输入用户名'); return; }
+  if (!password) { toast('请输入密码'); return; }
+  if (password.length < 4) { toast('密码至少4个字符'); return; }
+  try {
+    const resp = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: name, password: password}),
+    });
+    const data = await resp.json();
+    if (!data.ok) { toast(data.error || '注册失败'); return; }
+    // Auto-login after register
+    const loginResp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: name, password: password}),
+    });
+    const loginData = await loginResp.json();
+    if (loginData.ok) {
+      await onAuthSuccess(name, loginData.profile, loginData.token);
+    } else {
+      toast('注册成功，请登录');
+    }
+  } catch(e) { toast('注册失败: ' + e.message); }
+}
+
+async function onAuthSuccess(name, profile, token) {
+  userId = name;
+  document.getElementById('sidebar-avatar').textContent = name[0].toUpperCase();
+  document.getElementById('setting-nickname').value = name;
+  document.getElementById('login-modal').classList.remove('show');
+  
+  // Save auth token for auto-login
+  localStorage.setItem('im_auth', JSON.stringify({username: name, token: token}));
+  
+  // Load AI configs
+  aiPresets = profile.ai_presets || [];
+  aiActiveIdx = profile.ai_active || 0;
+  updateAiDisplay();
+  
+  // Load servers from profile (merge with local if local has data)
+  savedServers = profile.servers || [];
+  if (savedServers.length === 0) {
+    const local = JSON.parse(localStorage.getItem('im_servers') || '[]');
+    if (local.length > 0) savedServers = local;
+  }
+  localStorage.setItem('im_servers', JSON.stringify(savedServers));
+  
+  // Load memory
+  if (profile.memory) {
+    document.getElementById('memory-text').value = profile.memory;
+  }
+  
+  renderServerStatus();
+  initChat();
+}
+
+// ═══ CHAT ═══
+function initChat() {
+  fetch('/api/chat/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({user_id: userId}),
+  }).then(r => r.json()).then(data => {
+    if (data.ok) {
+      aiActiveIdx = data.active_idx || 0;
+      document.getElementById('chat-input').disabled = false;
+      document.getElementById('chat-send').disabled = false;
+      const el = document.getElementById('chat-messages');
+      el.innerHTML = '';
+      if (data.history && data.history.length) {
+        data.history.forEach(msg => {
+          appendMessage({from: msg.from, text: msg.text, time: msg.time, isSelf: msg.isSelf});
+        });
+      } else {
+        el.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#8e8e93;font-size:14px">发送消息开始聊天</div>';
+      }
+      connectSSE();
+      loadAiConfigs();
+    } else { toast('登录失败: ' + (data.error || '')); }
+  }).catch(e => { toast('登录失败: ' + e.message); });
+}
+
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource(`/api/chat/events?user_id=${encodeURIComponent(userId)}`);
+  eventSource.onmessage = (e) => {
+    try { const data = JSON.parse(e.data); handleSSEMessage(data); } catch(_) {}
+  };
+  eventSource.onerror = () => {
+    if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = setTimeout(() => connectSSE(), 5000);
+  };
+}
+
+function handleSSEMessage(data) {
+  switch(data.type) {
+    case 'message': receiveMessage(data); break;
+    case 'disk_refresh': diskRefresh(); break;
+  }
+}
+
+function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  const payload = {
+    user_id: userId,
+    text: text,
+    time: new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'})
+  };
+  fetch('/api/chat/send', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload),
+  }).catch(e => { toast('发送失败: ' + e.message); input.value = text; });
+}
+
+function receiveMessage(data) {
+  if (data.model_idx !== undefined && data.model_idx !== aiActiveIdx) return;
+  appendMessage({from: data.from, text: data.text, time: data.time, isSelf: data.isSelf});
+}
+
+function appendMessage(msg) {
+  const el = document.getElementById('chat-messages');
+  // Remove placeholder if present
+  const ph = el.querySelector('div[style*="text-align:center"]');
+  if (ph) ph.remove();
+  const div = document.createElement('div');
+  div.className = `msg ${msg.isSelf ? 'self' : 'other'}`;
+  div.innerHTML = `${msg.text}<div class="time">${msg.time || ''}</div>`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+document.getElementById('chat-send').addEventListener('click', sendMessage);
+
+// ═══ CLOUD DISK ═══
+function showServerList() {
+  renderServerList();
+  document.getElementById('server-drawer').classList.add('show');
+}
+
+function closeDrawer() {
+  document.getElementById('server-drawer').classList.remove('show');
+}
+
+function renderServerStatus() {
+  const connectedIds = Object.keys(connectedServers);
+  if (connectedIds.length > 0) {
+    const s = connectedServers[activeServerId || connectedIds[0]];
+    document.getElementById('disk-server-name').textContent = s.name || s.host;
+  } else {
+    document.getElementById('disk-server-name').textContent = '未连接';
+  }
+}
+
+function showAddServer() {
+  document.getElementById('server-modal').classList.add('show');
+  document.getElementById('srv-name').value = '';
+  document.getElementById('srv-host').value = '';
+  document.getElementById('srv-port').value = '22';
+  document.getElementById('srv-user').value = 'root';
+  document.getElementById('srv-pass').value = '';
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('show');
+}
+
+async function connectServer() {
+  const data = {
+    name: document.getElementById('srv-name').value.trim() || '未命名',
+    host: document.getElementById('srv-host').value.trim(),
+    port: parseInt(document.getElementById('srv-port').value) || 22,
+    username: document.getElementById('srv-user').value.trim() || 'root',
+    password: document.getElementById('srv-pass').value,
+    key_file: '',
+    base_path: '/home/ubuntu/yunpan',
+    user_id: userId,
+  };
+  if (!data.host) { toast('请输入主机地址'); return; }
+  const btn = document.querySelector('#server-modal .btn-confirm');
+  btn.textContent = '连接中...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/disks/connect', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data),
+    });
+    const result = await resp.json();
+    btn.textContent = '连接';
+    btn.disabled = false;
+    if (!result.ok) { toast('❌ ' + result.error); return; }
+    const server = { ...data, conn_id: result.conn_id, connected: true };
+    connectedServers[result.conn_id] = server;
+    const saveIdx = savedServers.findIndex(s => s.host === data.host && s.port === data.port && s.username === data.username);
+    const saveEntry = { name: data.name, host: data.host, port: data.port, username: data.username, password: data.password, key_file: data.key_file, base_path: data.base_path };
+    if (saveIdx >= 0) savedServers[saveIdx] = saveEntry;
+    else savedServers.push(saveEntry);
+    localStorage.setItem('im_servers', JSON.stringify(savedServers));
+    // Save servers to user profile
+    fetch('/api/user/profile', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ user_id: userId, servers: savedServers }),
+    }).catch(() => {});
+    basePath = '/home/ubuntu/yunpan';
+    currentDiskPath = basePath;
+    document.getElementById('current-path').textContent = basePath + ' 🔒';
+    renderServerStatus();
+    closeModal('server-modal');
+    closeDrawer();
+    selectServer(result.conn_id);
+    toast('✅ 连接成功');
+  } catch(e) {
+    btn.textContent = '连接';
+    btn.disabled = false;
+    toast('❌ 网络错误: ' + e.message);
+  }
+}
+
+function renderServerList() {
+  const el = document.getElementById('server-list');
+  const connectedIds = Object.keys(connectedServers);
+  const disconnected = savedServers.filter(s => !connectedIds.some(id => {
+    const c = connectedServers[id];
+    return c && c.host === s.host && c.port === s.port && c.username === s.username;
+  }));
+  const items = [];
+  connectedIds.forEach(id => {
+    const s = connectedServers[id];
+    items.push({ type: 'connected', id, name: s.name || s.host, host: s.host });
+  });
+  disconnected.forEach(s => {
+    items.push({ type: 'saved', name: s.name || s.host, host: s.host, port: s.port, username: s.username, password: s.password, key_file: s.key_file });
+  });
+  if (items.length === 0) {
+    el.innerHTML = '<div style="padding:30px 16px;text-align:center;color:#8e8e93;font-size:13px">暂无服务器</div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    if (item.type === 'connected') {
+      return `<div class="server-item ${activeServerId === item.id ? 'active' : ''}" onclick="selectServer('${item.id}');closeDrawer()">
+        <div class="dot"></div><span class="srv-name">${item.name}</span><span class="srv-status online">已连接</span>
+      </div>`;
+    } else {
+      return `<div class="server-item" onclick="reconnectServer('${item.name}', '${item.host}', ${item.port}, '${item.username}', '${item.password || ''}', '${item.key_file || ''}')">
+        <div class="dot offline"></div><span class="srv-name">${item.name}</span><span class="srv-status">已保存</span>
+      </div>`;
+    }
+  }).join('');
+}
+
+async function reconnectServer(name, host, port, username, password, key_file) {
+  const data = { name, host, port, username, password, key_file, base_path: '/home/ubuntu/yunpan', user_id: userId };
+  document.getElementById('srv-name').value = name;
+  document.getElementById('srv-host').value = host;
+  document.getElementById('srv-port').value = port;
+  document.getElementById('srv-user').value = username;
+  document.getElementById('srv-pass').value = password;
+  try {
+    const resp = await fetch('/api/disks/connect', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data),
+    });
+    const result = await resp.json();
+    if (!result.ok) { toast('❌ ' + result.error); return; }
+    const server = { ...data, conn_id: result.conn_id, connected: true };
+    connectedServers[result.conn_id] = server;
+    basePath = '/home/ubuntu/yunpan';
+    currentDiskPath = basePath;
+    document.getElementById('current-path').textContent = basePath + ' 🔒';
+    renderServerStatus();
+    closeDrawer();
+    selectServer(result.conn_id);
+    toast('✅ 重新连接成功');
+  } catch(e) { toast('❌ 网络错误: ' + e.message); }
+}
+
+async function selectServer(id) {
+  activeServerId = id;
+  renderServerList();
+  renderServerStatus();
+  await loadDiskDir(currentDiskPath);
+  loadDiskUsage();
+}
+
+async function loadDiskUsage() {
+  if (!activeServerId) return;
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/usage`);
+    const result = await resp.json();
+    if (!result.ok) return;
+    const total = result.total;
+    const used = result.used;
+    const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+    document.getElementById('storage-fill').style.width = pct + '%';
+    // Color: green < 70%, orange < 90%, red >= 90%
+    if (pct > 85) document.getElementById('storage-fill').style.background = '#ff3b30';
+    else if (pct > 60) document.getElementById('storage-fill').style.background = '#ff9500';
+    else document.getElementById('storage-fill').style.background = '#34c759';
+    document.getElementById('storage-text').textContent = `${formatSize(used)} / ${formatSize(total)}`;
+    document.getElementById('storage-bar-wrap').style.display = 'flex';
+  } catch(_) {}
+}
+
+async function loadDiskDir(path) {
+  if (!activeServerId) return;
+  currentDiskPath = path;
+  document.getElementById('current-path').textContent = path + (path === basePath && basePath !== '/' ? ' 🔒' : '');
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/list?path=${encodeURIComponent(path)}`);
+    const result = await resp.json();
+    if (!result.ok) { toast(result.error); return; }
+    const el = document.getElementById('disk-files');
+    if (result.entries.length === 0) {
+      el.innerHTML = '<div class="disk-empty">📂 空文件夹</div>'; return;
+    }
+    el.innerHTML = result.entries.map(f => {
+      const icon = f.is_dir ? '📁' : getFileIcon(f.name);
+      const size = f.is_dir ? '' : formatSize(f.size);
+      const time = f.mtime ? new Date(f.mtime * 1000).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      return `<div class="file-item" ${f.is_dir ? `onclick="navigateToDir('${path === '/' ? '' : path}/${f.name}'.replace(/\\/+/g,'/'))"` : ''}>
+        <div class="icon">${icon}</div>
+        <div class="info">
+          <div class="name">${f.name}</div>
+          <div class="meta">${[size, time].filter(Boolean).join(' · ')}</div>
+        </div>
+        <div class="actions">
+          ${f.is_dir ? '' : `<button onclick="event.stopPropagation();diskDownload('${encodeURIComponent(path === '/' ? '' : path)}/${encodeURIComponent(f.name)}'.replace(/%2F/g,'/'))">⬇ 下载</button>`}
+          <button class="del" onclick="event.stopPropagation();diskDelete('${f.name}')">🗑</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { toast('加载失败: ' + e.message); }
+}
+
+function getFileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  const icons = {
+    'txt':'📄','md':'📝','py':'🐍','js':'📜','html':'🌐','css':'🎨',
+    'jpg':'🖼','jpeg':'🖼','png':'🖼','gif':'🖼','webp':'🖼','svg':'🖼',
+    'mp3':'🎵','wav':'🎵','flac':'🎵','mp4':'🎬','avi':'🎬','mkv':'🎬',
+    'zip':'📦','rar':'📦','7z':'📦','gz':'📦','tar':'📦',
+    'pdf':'📕','doc':'📘','docx':'📘','xls':'📊','xlsx':'📊',
+    'json':'📋','yaml':'📋','yml':'📋','xml':'📋','toml':'📋',
+    'sh':'💻','bat':'💻','exe':'⚙️','deb':'📦','rpm':'📦','apk':'📱',
+  };
+  return icons[ext] || '📄';
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B','KB','MB','GB','TB'];
+  let i = 0; let size = bytes;
+  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+  return size.toFixed(1) + ' ' + units[i];
+}
+
+function navigateToDir(path) {
+  if (basePath !== '/' && path !== basePath && !path.startsWith(basePath + '/')) {
+    toast('🔒 不能超出根路径');
+    loadDiskDir(basePath); return;
+  }
+  loadDiskDir(path);
+}
+
+function diskGoBack() {
+  if (currentDiskPath === '/' || currentDiskPath === basePath) return;
+  const parent = currentDiskPath.split('/').slice(0, -1).join('/') || '/';
+  loadDiskDir(parent.startsWith(basePath) ? parent : basePath);
+}
+
+function diskRefresh() { loadDiskDir(currentDiskPath); }
+
+function diskUpload() {
+  if (!activeServerId) { toast('请先连接服务器'); return; }
+  document.getElementById('upload-modal').classList.add('show');
+  document.getElementById('upload-file').value = '';
+  document.getElementById('upload-file-name').textContent = '未选择任何文件';
+  document.getElementById('upload-progress').style.display = 'none';
+  document.getElementById('upload-actions').style.display = 'flex';
+}
+
+async function doUpload() {
+  if (uploading) { toast('已有上传任务进行中'); return; }
+  const fileInput = document.getElementById('upload-file');
+  const file = fileInput.files[0];
+  if (!file) { toast('请选择文件'); return; }
+  uploading = true;
+  document.getElementById('upload-progress').style.display = 'block';
+  document.getElementById('upload-actions').style.display = 'none';
+  document.getElementById('progress-text').textContent = `正在传输 ${file.name} 到远程服务器...`;
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('path', currentDiskPath);
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/upload`, { method:'POST', body: formData });
+    const result = await resp.json();
+    uploading = false;
+    if (!result.ok) {
+      document.getElementById('upload-progress').style.display = 'none';
+      document.getElementById('upload-actions').style.display = 'flex';
+      toast('❌ ' + result.error); return;
+    }
+    closeModal('upload-modal');
+    toast('✅ 上传成功');
+    diskRefresh();
+    loadDiskUsage();
+  } catch(e) {
+    uploading = false;
+    document.getElementById('upload-progress').style.display = 'none';
+    document.getElementById('upload-actions').style.display = 'flex';
+    toast('❌ 上传失败: ' + e.message);
+  }
+}
+
+async function diskDownload(path) {
+  if (!activeServerId) return;
+  const cleanPath = decodeURIComponent(path);
+  toast('⏳ 下载中...');
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/download?path=${encodeURIComponent(cleanPath)}`);
+    const result = await resp.json();
+    if (!result.ok) { toast('❌ ' + result.error); return; }
+    const a = document.createElement('a');
+    a.href = window.location.origin + result.url;
+    a.download = result.filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    toast('✅ 开始下载');
+  } catch(e) { toast('❌ 下载失败: ' + e.message); }
+}
+
+let confirmCallback = null;
+
+async function diskDelete(name) {
+  if (!activeServerId) return;
+  document.getElementById('confirm-icon').textContent = '🗑';
+  document.getElementById('confirm-title').textContent = '确认删除';
+  document.getElementById('confirm-msg').textContent = `确定要删除 "${name}" 吗？`;
+  document.getElementById('confirm-btn').textContent = '删除';
+  document.getElementById('confirm-btn').style.background = '#ff3b30';
+  confirmCallback = async () => {
+    const fullPath = `${currentDiskPath === '/' ? '' : currentDiskPath}/${name}`;
+    try {
+      const resp = await fetch(`/api/disks/${activeServerId}/delete`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: fullPath}),
+      });
+      const result = await resp.json();
+      if (!result.ok) { toast('❌ ' + result.error); return; }
+      toast('✅ 已删除');
+      diskRefresh();
+      loadDiskUsage();
+    } catch(e) { toast('删除失败: ' + e.message); }
+  };
+  document.getElementById('confirm-btn').onclick = () => { closeModal('confirm-modal'); if (confirmCallback) confirmCallback(); };
+  document.getElementById('confirm-modal').classList.add('show');
+}
+
+function diskMkdir() {
+  if (!activeServerId) { toast('请先连接服务器'); return; }
+  document.getElementById('mkdir-modal').classList.add('show');
+  document.getElementById('mkdir-name').value = '';
+}
+
+async function doMkdir() {
+  const name = document.getElementById('mkdir-name').value.trim();
+  if (!name) { toast('请输入文件夹名'); return; }
+  const fullPath = `${currentDiskPath === '/' ? '' : currentDiskPath}/${name}`;
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/mkdir`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: fullPath}),
+    });
+    const result = await resp.json();
+    if (!result.ok) { toast('❌ ' + result.error); return; }
+    closeModal('mkdir-modal');
+    toast('✅ 创建成功');
+    diskRefresh();
+  } catch(e) { toast('创建失败: ' + e.message); }
+}
+
+// ═══ AI MODEL SWITCHING ═══
+async function loadAiConfigs() {
+  try {
+    const resp = await fetch(`/api/chat/config?user_id=${encodeURIComponent(userId)}`);
+    const result = await resp.json();
+    if (result.ok) {
+      aiPresets = result.presets || [];
+      aiActiveIdx = result.active || 0;
+      updateAiDisplay();
+    }
+  } catch(_) {}
+}
+
+function updateAiDisplay() {
+  const name = (aiPresets.length > 0 && aiActiveIdx < aiPresets.length)
+    ? aiPresets[aiActiveIdx].name : '友友';
+  document.getElementById('ai-name-display').textContent = name;
+  const se = document.getElementById('setting-ai-name');
+  if (se) se.textContent = name;
+}
+
+async function switchAiModel() {
+  if (aiPresets.length === 0) {
+    toast('未配置AI模型，去设置添加');
+    return;
+  }
+  if (aiPresets.length === 1) {
+    toast(`当前：${aiPresets[0].name} (${aiPresets[0].model})`);
+    return;
+  }
+  showAiModelList();
+}
+
+function showAiModelList() {
+  // Remove old picker if exists
+  const old = document.getElementById('ai-model-picker');
+  if (old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'ai-model-picker';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:flex-end';
+  overlay.addEventListener('click', function(e) { if (e.target === this) this.remove(); });
+  const drawer = document.createElement('div');
+  drawer.style.cssText = 'background:#fff;border-radius:14px 14px 0 0;padding:16px 0;max-height:50%;overflow-y:auto;width:100%';
+  let html = '<div style="width:36px;height:4px;background:#d1d1d6;border-radius:2px;margin:0 auto 12px"></div>';
+  html += '<div style="font-size:15px;font-weight:600;color:#1d1d1f;padding:0 16px 10px">切换模型</div>';
+  aiPresets.forEach((p, i) => {
+    const active = i === aiActiveIdx;
+    html += `<div onclick="selectAiModel(${i})" style="padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f2f2f2;cursor:pointer${
+      active ? ';background:#f0f7ff' : ''
+    }">
+      <span style="font-size:14px;flex:1;color:${active ? '#007aff' : '#1d1d1f'};font-weight:${active ? '600' : '400'}">${p.name}</span>
+      <span style="font-size:11px;color:#8e8e93;margin-right:4px">${p.model}</span>
+      ${active ? '<span style="color:#007aff;font-size:16px">✓</span>' : ''}
+    </div>`;
+  });
+  drawer.innerHTML = html;
+  overlay.appendChild(drawer);
+  document.body.appendChild(overlay);
+}
+
+async function selectAiModel(idx) {
+  if (idx === aiActiveIdx) {
+    document.getElementById('ai-model-picker')?.remove();
+    return;
+  }
+  aiActiveIdx = idx;
+  updateAiDisplay();
+  await fetch('/api/chat/config', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ user_id: userId, presets: aiPresets, active: aiActiveIdx }),
+  });
+  // Load new model's chat history
+  const resp = await fetch(`/api/chat/history?user_id=${encodeURIComponent(userId)}&model_idx=${aiActiveIdx}`);
+  const result = await resp.json();
+  const el = document.getElementById('chat-messages');
+  el.innerHTML = '';
+  if (result.ok && result.history && result.history.length) {
+    result.history.forEach(msg => {
+      appendMessage({from: msg.from, text: msg.text, time: msg.time, isSelf: msg.isSelf});
+    });
+  } else {
+    el.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#8e8e93;font-size:14px">发送消息开始聊天</div>';
+  }
+  el.scrollTop = el.scrollHeight;
+  document.getElementById('ai-model-picker')?.remove();
+  toast(`切换到 ${aiPresets[aiActiveIdx].name}`);
+}
+
+function renderAiConfigs() {
+  const el = document.getElementById('ai-config-list');
+  el.innerHTML = aiPresets.map((p, i) => `
+    <div style="background:#f5f5f7;border-radius:10px;padding:12px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <input style="font-weight:600;font-size:14px;flex:1;margin:0;margin-right:8px" value="${p.name || ''}" placeholder="名称" data-idx="${i}" data-field="name" oninput="updatePresetField(this)">
+        <button onclick="removeAiConfig(${i})" style="background:none;border:none;color:#ff3b30;font-size:16px;cursor:pointer;padding:4px">✕</button>
+      </div>
+      <input style="margin-bottom:6px;font-size:13px" value="${p.base_url || ''}" placeholder="API 地址" data-idx="${i}" data-field="base_url" oninput="updatePresetField(this)">
+      <input style="margin-bottom:6px;font-size:13px" value="${p.api_key || ''}" placeholder="API Key" type="password" data-idx="${i}" data-field="api_key" oninput="updatePresetField(this)">
+      <input style="font-size:13px" value="${p.model || ''}" placeholder="模型名" data-idx="${i}" data-field="model" oninput="updatePresetField(this)">
+    </div>
+  `).join('');
+}
+
+function updatePresetField(input) {
+  const idx = parseInt(input.dataset.idx);
+  const field = input.dataset.field;
+  if (!aiPresets[idx]) aiPresets[idx] = {name:'', api_key:'', base_url:'', model:''};
+  aiPresets[idx][field] = input.value;
+}
+
+function removeAiConfig(idx) {
+  aiPresets.splice(idx, 1);
+  if (aiActiveIdx >= aiPresets.length) aiActiveIdx = Math.max(0, aiPresets.length - 1);
+  renderAiConfigs();
+}
+
+function addAiConfig() {
+  aiPresets.push({name:'新模型', api_key:'', base_url:'https://api.openai.com/v1', model:'gpt-4o'});
+  renderAiConfigs();
+}
+
+function showAiConfigEditor() {
+  renderAiConfigs();
+  updateAiEditorCurrent();
+  document.getElementById('ai-config-modal').classList.add('show');
+}
+
+function updateAiEditorCurrent() {
+  const name = (aiPresets.length > 0 && aiActiveIdx < aiPresets.length)
+    ? aiPresets[aiActiveIdx].name : '友友';
+  document.getElementById('ai-editor-current').textContent = '当前：' + name;
+}
+
+async function saveAiConfigEditor() {
+  const resp = await fetch('/api/chat/config', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ user_id: userId, presets: aiPresets, active: aiActiveIdx }),
+  });
+  const result = await resp.json();
+  if (result.ok) {
+    updateAiDisplay();
+    updateAiEditorCurrent();
+    document.getElementById('ai-config-modal').classList.remove('show');
+    toast('AI 模型已保存');
+  } else {
+    toast('保存失败');
+  }
+}
+
+// ═══ SETTINGS ═══
+async function saveSettings() {
+  const nick = document.getElementById('setting-nickname').value.trim();
+  if (nick && nick !== userId) {
+    if (eventSource) eventSource.close();
+    userId = nick;
+    document.getElementById('sidebar-avatar').textContent = nick[0].toUpperCase();
+    initChat();
+  }
+  // Save memory (nickname & AI configs are saved separately)
+  const memText = document.getElementById('memory-text').value.trim();
+  await fetch('/api/chat/memory', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ user_id: userId, text: memText }),
+  });
+  // Also save to user profile
+  await fetch('/api/user/profile', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ user_id: userId, memory: memText }),
+  });
+  toast('已保存');
+}
+
+async function loadMemory() {
+  try {
+    const resp = await fetch(`/api/chat/memory?user_id=${encodeURIComponent(userId)}`);
+    const result = await resp.json();
+    if (result.ok) document.getElementById('memory-text').value = result.text || '';
+  } catch(_) {}
+}
+
+// ═══ TOAST ═══
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ═══ DISMISS DRAWER ON BACKDROP ═══
+document.getElementById('server-drawer').addEventListener('click', function(e) {
+  if (e.target === this) closeDrawer();
+});
+
+// ═══ KEYBOARD ═══
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal.show').forEach(m => m.classList.remove('show'));
+    closeDrawer();
+  }
+});
+</script>
+</body>
+</html>
