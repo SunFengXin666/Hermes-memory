@@ -299,15 +299,34 @@ def chat_vision():
 
 Add a hidden `<input type="file" accept="image/*">` and a 🖼 button next to the send button:
 
+### ⚠️ Android WebView: Do NOT use `display:none` + `.click()`
+
+In Android WebView, calling `.click()` on a hidden `<input type="file">` via JavaScript is **silently ignored** — the `WebChromeClient.onShowFileChooser` is only triggered on direct user gesture. Neither `display:none` + `.click()`, nor dynamically creating an input and calling `.click()`, nor `<label>` wrapping works.
+
+✅ **Working approach: Transparent overlay input**
+
+Place the `<input type="file">` visually on top of the 🖼 icon with `opacity:0` so the user taps the input directly:
+
 ```html
 <div class="chat-input-area">
   <input type="text" id="chat-input" placeholder="输入消息...">
-  <input type="file" id="vision-input" accept="image/*" style="display:none"
-         onchange="sendVisionImage(this)">
-  <button onclick="document.getElementById('vision-input').click()" title="图片识别">🖼</button>
+  <div style="position:relative;width:36px;height:36px;flex-shrink:0">
+    <input type="file" id="vision-input" accept="image/*" onchange="sendVisionImage(this)"
+      style="position:absolute;top:0;left:0;width:100%;height:100%;
+             opacity:0;z-index:2;cursor:pointer;font-size:0">
+    <span style="position:absolute;top:0;left:0;width:100%;height:100%;
+               display:flex;align-items:center;justify-content:center;
+               font-size:20px;z-index:1;color:#8e8e93;pointer-events:none">🖼</span>
+  </div>
   <button id="chat-send">➤</button>
 </div>
 ```
+
+Key points:
+- `opacity:0` makes the input invisible but still interactive
+- `z-index:2` puts the input above the icon (`z-index:1` with `pointer-events:none`)
+- The user taps the icon area → direct gesture on `<input>` → `onShowFileChooser` fires
+- Do NOT use `<label>` wrapping (same limitation as `.click()` in Android WebView)
 
 ```javascript
 async function sendVisionImage(input) {
@@ -350,6 +369,7 @@ async function sendVisionImage(input) {
 | Large images cause timeout/timeout | base64 encoding of multi-MB images | Limit file input to `accept="image/*"` (not video). Consider max size check on server side |
 | No vision model available | Provider doesn't offer vision, or API key invalid | Test vision endpoint separately before integrating. Use a known-working provider (GPT-4o, MiMo Omni, etc.) |
 | SSE double-delivery of vision result | Both `chat/vision` endpoint AND `chat/completion` push the same reply | Only push from one place — the vision endpoint handles its own SSE push. Don't also send the vision text through `chat/send` |
+| **User image message appears twice** | Frontend shows "📷 [图片]" optimistically via `appendMessage`, AND backend pushes the same message via SSE → `receiveMessage` appends it again | **Remove the SSE push for the user's image message.** Keep `save_message` (for history persistence + `fetchMissedMessages`), but only push the AI's analysis result via SSE. The frontend's optimistic display is sufficient for the user's own message |
 | Image shows in uploaded file list but no AI analysis | Frontend waited for HTTP response instead of SSE | The `POST` response just confirms the server received the image. The actual AI reply comes through SSE moments later |
 
 ## Per-User Persistent Memory (User-Written)
