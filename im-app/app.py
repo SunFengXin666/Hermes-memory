@@ -623,6 +623,53 @@ def chat_history():
     history = load_history(user_id, model_idx)
     return jsonify({'ok': True, 'history': history})
 
+# ─── Vision: Image recognition via MiMo ────────────────
+VISION_API_KEY = 'tp-cr3x7h17d0ss3kupmhid5jhcngsdk4gg75k3yve2jnby218r'
+VISION_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1'
+VISION_MODEL = 'mimo-v2-omni'
+
+@app.route('/api/chat/vision', methods=['POST'])
+def chat_vision():
+    user_id = request.form.get('user_id', '')
+    file = request.files.get('image')
+    if not user_id or not file:
+        return jsonify({'ok': False, 'error': '参数不全'}), 400
+    # Save image to temp
+    img_path = UPLOAD_DIR / f"vision_{uuid.uuid4().hex[:12]}_{file.filename}"
+    file.save(str(img_path))
+    try:
+        with open(img_path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode()
+        ext = os.path.splitext(file.filename)[1].lower() or '.png'
+        mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png' if ext == '.png' else 'image/gif' if ext == '.gif' else 'image/webp'
+        data_url = f'data:{mime};base64,{b64}'
+        client = OpenAI(api_key=VISION_API_KEY, base_url=VISION_BASE_URL)
+        resp = client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[{
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': '请详细描述这张图片的内容'},
+                    {'type': 'image_url', 'image_url': {'url': data_url}},
+                ]
+            }],
+            max_tokens=500,
+            timeout=30,
+        )
+        reply = resp.choices[0].message.content or '（无法识别）'
+        # Save to chat history
+        active_idx = ai_configs.get(user_id, {}).get('active', 0)
+        save_message(user_id, {'from': user_id, 'text': f'📷 [图片] {file.filename}', 'time': '', 'isSelf': True}, active_idx)
+        save_message(user_id, {'from': 'AI', 'text': f'🖼 图片分析结果：\n{reply}', 'time': '', 'isSelf': False}, active_idx)
+        # Push to SSE
+        push_to_user(user_id, {'type': 'message', 'from': user_id, 'text': f'📷 [图片] {file.filename}', 'time': '', 'isSelf': True, 'model_idx': active_idx})
+        push_to_user(user_id, {'type': 'message', 'from': 'AI', 'text': f'🖼 图片分析结果：\n{reply}', 'time': '', 'isSelf': False, 'model_idx': active_idx})
+        img_path.unlink(missing_ok=True)
+        return jsonify({'ok': True, 'reply': reply})
+    except Exception as e:
+        img_path.unlink(missing_ok=True)
+        return jsonify({'ok': False, 'error': f'图片识别失败: {str(e)}'}), 500
+
 @app.route('/api/user/profile', methods=['POST'])
 def user_profile():
     """Save user profile (servers, memory)"""
@@ -853,6 +900,130 @@ def disk_usage(conn_id):
         return jsonify({'ok': True, 'total': QUOTA, 'used': used, 'free': free})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
+
+# ─── File Preview (Word, Excel, PPT, Images) ────────────────
+PREVIEWABLE_IMAGES = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'}
+PREVIEWABLE_TEXT = {'.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.log', '.sh', '.bat', '.csv', '.env', '.sql', '.r', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.ts', '.jsx', '.tsx', '.vue', '.svelte', '.rb', '.php', '.pl', '.lua', '.tex'}
+
+@app.route('/api/disks/<conn_id>/preview', methods=['GET'])
+def disk_preview(conn_id):
+    conn = sftp_connections.get(conn_id)
+    if not conn:
+        return jsonify({'ok': False, 'error': '连接已断开'}), 404
+    path = request.args.get('path', '')
+    if not path:
+        return jsonify({'ok': False, 'error': '缺少路径'}), 400
+    info = conn.get('info', {})
+    ext = os.path.splitext(path)[1].lower()
+    filename = os.path.basename(path)
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(info['host'], port=int(info.get('port', 22)),
+            username=info['username'], password=info.get('password', ''), timeout=15)
+        sftp = client.open_sftp()
+        result = {}
+        try:
+            # ── Images ──
+            if ext in PREVIEWABLE_IMAGES:
+                with sftp.open(path, 'rb') as f:
+                    raw = f.read()
+                mime_map = {
+                    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                    '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+                    '.svg': 'image/svg+xml',
+                }
+                mime = mime_map.get(ext, 'image/png')
+                b64 = base64.b64encode(raw).decode('utf-8')
+                result = {'ok': True, 'type': 'image', 'data': f'data:{mime};base64,{b64}', 'filename': filename, 'size': len(raw)}
+
+            # ── Word ──
+            elif ext == '.docx':
+                import io
+                with sftp.open(path, 'rb') as f:
+                    raw = f.read()
+                from docx import Document
+                doc = Document(io.BytesIO(raw))
+                paragraphs = [p.text for p in doc.paragraphs]
+                # Also get tables
+                tables = []
+                for table in doc.tables:
+                    rows = []
+                    for row in table.rows:
+                        rows.append([cell.text for cell in row.cells])
+                    tables.append(rows)
+                text = '\n'.join(paragraphs)
+                result = {'ok': True, 'type': 'word', 'text': text, 'tables': tables, 'filename': filename, 'size': len(raw)}
+
+            # ── Excel ──
+            elif ext in ('.xlsx', '.xls'):
+                import io
+                with sftp.open(path, 'rb') as f:
+                    raw = f.read()
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+                sheets = []
+                for sheet_name in wb.sheetnames:
+                    ws = wb[sheet_name]
+                    rows_data = []
+                    for row in ws.iter_rows(values_only=True):
+                        rows_data.append([str(c) if c is not None else '' for c in row])
+                    sheets.append({'name': sheet_name, 'rows': rows_data})
+                wb.close()
+                result = {'ok': True, 'type': 'excel', 'sheets': sheets, 'filename': filename, 'size': len(raw)}
+
+            # ── PPT ──
+            elif ext == '.pptx':
+                import io
+                with sftp.open(path, 'rb') as f:
+                    raw = f.read()
+                from pptx import Presentation
+                prs = Presentation(io.BytesIO(raw))
+                slides = []
+                for slide in prs.slides:
+                    slide_texts = []
+                    for shape in slide.shapes:
+                        if shape.has_text_frame:
+                            for para in shape.text_frame.paragraphs:
+                                t = para.text.strip()
+                                if t:
+                                    slide_texts.append(t)
+                        if shape.has_table:
+                            table = shape.table
+                            for row in table.rows:
+                                slide_texts.append(' | '.join(cell.text for cell in row.cells))
+                    slides.append(slide_texts)
+                result = {'ok': True, 'type': 'ppt', 'slides': slides, 'filename': filename, 'size': len(raw)}
+
+            # ── PDF ──
+            elif ext == '.pdf':
+                with sftp.open(path, 'rb') as f:
+                    raw = f.read()
+                local_pdf = DOWNLOAD_DIR / f"preview_{uuid.uuid4().hex[:8]}_{filename}"
+                local_pdf.write_bytes(raw)
+                result = {'ok': True, 'type': 'pdf', 'url': f'/dl/{local_pdf.name}', 'filename': filename, 'size': len(raw)}
+
+            # ── Text files ──
+            elif ext in PREVIEWABLE_TEXT:
+                with sftp.open(path, 'r') as f:
+                    content = f.read(200000)  # max 200KB
+                result = {'ok': True, 'type': 'text', 'content': content, 'filename': filename, 'size': len(content)}
+
+            else:
+                # Fallback: try to read as text
+                try:
+                    with sftp.open(path, 'r') as f:
+                        content = f.read(50000)
+                    result = {'ok': True, 'type': 'text', 'content': content, 'filename': filename, 'size': len(content)}
+                except:
+                    result = {'ok': False, 'error': f'不支持预览 {ext} 格式文件，请下载后查看'}
+
+        finally:
+            sftp.close()
+            client.close()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'预览失败: {str(e)}'}), 400
 
 @app.route('/api/disks/disconnect', methods=['POST'])
 def disk_disconnect():

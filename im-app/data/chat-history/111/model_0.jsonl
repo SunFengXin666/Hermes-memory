@@ -6,3 +6,5 @@
 {"from": "AI", "text": "⚠️ AI出错了: Error code: 400 - {'error': {'code': '400', 'message': 'Not supported model MiMo-V2.5-Pro', 'param': 'Param Incorrect'}}", "time": "", "isSelf": false}
 {"from": "111", "text": "你好", "time": "19:53", "isSelf": true}
 {"from": "AI", "text": "⚠️ AI出错了: Error code: 401 - {'error': {'message': 'Invalid API Key', 'param': 'Please provide valid API Key', 'code': '401', 'type': 'invalid_key'}}", "time": "", "isSelf": false}
+{"from": "111", "text": "📷 [图片] test_vision.png", "time": "", "isSelf": true}
+{"from": "AI", "text": "🖼 图片分析结果：\n这张图片呈现为一个完全均匀、饱和度极高的纯红色矩形色块。\n\n详细描述如下：\n1. **颜色**：画面被一种鲜艳、明亮的红色完全覆盖。这种红色非常纯粹，没有可见的渐变、阴影、高光或杂色。\n2. **纹理与细节**：图像表面光滑，没有任何纹理、图案、文字、线条或其他视觉元素。它是一块纯净的色域。\n3. **形状与构图**：整个画面是一个标准的矩形，红色填满了画布的每一个像素，构图极其简单直接。\n4. **视觉感受**：这种强烈的单一红色在视觉上非常醒目，能立刻吸引注意力。它可能给人以热情、能量、警示或节庆等联想，具体含义取决于使用场景。\n\n总结来说，这是一张最简单的纯色图片，其全部内容就是一块完整的、无任何修饰的红色。", "time": "", "isSelf": false}

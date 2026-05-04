@@ -1,6 +1,13 @@
 {
   "password_hash": "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a",
-  "ai_presets": [],
+  "ai_presets": [
+    {
+      "api_key": "44c7cddf60761d694d6c2f424e4a4b4fe9220d26f7327ded",
+      "base_url": "http://localhost:8642/v1",
+      "model": "deepseek-v4-flash",
+      "name": "deepaeek"
+    }
+  ],
   "ai_active": 0,
   "servers": [
     {

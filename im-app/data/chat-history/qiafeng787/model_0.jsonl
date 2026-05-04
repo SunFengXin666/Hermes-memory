@@ -1,0 +1,10 @@
+{"from": "qiafeng787", "text": "你是什么模型？", "time": "21:52", "isSelf": true}
+{"from": "AI", "text": "⚠️ AI出错了: Error code: 401 - {'error': {'message': 'Invalid API key', 'type': 'invalid_request_error', 'code': 'invalid_api_key'}}", "time": "", "isSelf": false}
+{"from": "qiafeng787", "text": "？", "time": "21:56", "isSelf": true}
+{"from": "AI", "text": "DeepSeek V4 Flash，由 DeepSeek 提供。", "time": "", "isSelf": false}
+{"from": "qiafeng787", "text": "你的记忆系统在哪里", "time": "21:56", "isSelf": true}
+{"from": "AI", "text": "记忆系统在 `~/.hermes/memories/` 目录下：\n\n- **`MEMORY.md`** — 我的笔记（环境配置、项目结构、工具用法等）\n- **`USER.md`** — 你的个人资料（偏好、习惯、个人信息）\n\n另外 `state.db` 是会话搜索的数据库，`sessions/` 存历史对话记录。\n\n这些数据还同步到了 GitHub 仓库 `SunFengXin666/Hermes-memory`，自动备份。", "time": "", "isSelf": false}
+{"from": "qiafeng787", "text": "？", "time": "21:57", "isSelf": true}
+{"from": "AI", "text": "**物理存储：** `~/.hermes/memories/MEMORY.md` 和 `USER.md`\n\n**使用方式：** 每次对话开始，系统自动把这两个文件注入到我的提示里，所以我能记住你的配置、偏好和项目信息。\n\n**自动备份：** GitHub 仓库 `SunFengXin666/Hermes-memory`，通过 `/root/hermes-memory-backup/sync.sh` 在每次会话结束时自动 push。", "time": "", "isSelf": false}
+{"from": "qiafeng787", "text": "📷 [图片] 1000016667.jpg", "time": "", "isSelf": true}
+{"from": "AI", "text": "🖼 图片分析结果：\n这是一张手机应用的截图，详细内容可以从上到下拆解：\n\n### 1. 顶部状态栏\n- 左上角显示时间为**9:50**，旁边是抖音App的图标；\n- 右上角依次是：网速", "time": "", "isSelf": false}

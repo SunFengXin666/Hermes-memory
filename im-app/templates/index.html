@@ -121,6 +121,30 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .btn-cancel{background:#f5f5f7;border:none;color:#8e8e93}
 .btn-confirm{background:#007aff;border:none;color:#fff}
 
+/* ─── Preview Modal ─── */
+.preview-modal .modal-box{width:90vw;max-width:700px;max-height:85vh;display:flex;flex-direction:column;padding:0;overflow:hidden}
+.preview-header{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid #e5e5ea;flex-shrink:0}
+.preview-header .preview-filename{flex:1;font-size:15px;font-weight:600;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview-header button{background:none;border:none;font-size:20px;cursor:pointer;color:#8e8e93;padding:4px 8px;border-radius:6px}
+.preview-header button:active{background:#f5f5f7}
+.preview-body{flex:1;overflow:auto;padding:20px;min-height:200px}
+.preview-body img{max-width:100%;height:auto;display:block;margin:0 auto;border-radius:6px}
+.preview-body pre{font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap;word-wrap:break-word;font-family:inherit;color:#1d1d1f}
+.preview-body .sheet-tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
+.preview-body .sheet-tab{padding:6px 14px;background:#f5f5f7;border-radius:6px;font-size:12px;cursor:pointer;color:#8e8e93;border:none}
+.preview-body .sheet-tab.active{background:#007aff;color:#fff}
+.preview-body table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:8px;display:none}
+.preview-body table.active{display:table}
+.preview-body td,.preview-body th{border:1px solid #e5e5ea;padding:6px 10px;text-align:left;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview-body th{background:#f5f5f7;font-weight:600;position:sticky;top:0}
+.preview-body .slide-section{margin-bottom:16px;background:#f9f9fb;border-radius:8px;padding:12px}
+.preview-body .slide-section .slide-label{font-size:11px;color:#8e8e93;margin-bottom:6px;font-weight:600}
+.preview-body .slide-section p{margin:4px 0;font-size:13px;line-height:1.6;color:#1d1d1f}
+.preview-body .empty-preview{padding:40px;text-align:center;color:#8e8e93;font-size:14px}
+.preview-loading{text-align:center;padding:40px;color:#8e8e93;font-size:14px}
+.preview-loading:after{content:'';display:inline-block;width:16px;height:16px;border:2px solid #e5e5ea;border-top-color:#007aff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-left:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
 /* ─── Upload File Picker ─── */
 .upload-picker{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f5f5f7;border-radius:10px;margin-bottom:4px}
 .upload-picker .picker-btn{padding:6px 14px;background:#007aff;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap}
@@ -201,6 +225,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
         </div>
         <div class="chat-input-area">
           <input type="text" id="chat-input" placeholder="输入消息..." disabled>
+          <label style="width:36px;height:36px;flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:20px;color:#8e8e93;position:relative">
+            🖼
+            <input type="file" id="vision-input" accept="image/*" onchange="sendVisionImage(this)" style="display:none">
+          </label>
           <button id="chat-send" disabled>➤</button>
         </div>
       </div>
@@ -360,6 +388,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn-cancel" onclick="closeModal('ai-config-modal')">取消</button>
       <button class="btn-confirm" onclick="saveAiConfigEditor()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Preview Modal -->
+<div class="modal preview-modal" id="preview-modal">
+  <div class="modal-box">
+    <div class="preview-header">
+      <span class="preview-filename" id="preview-filename">文件</span>
+      <button onclick="closeModal('preview-modal')">✕</button>
+    </div>
+    <div class="preview-body" id="preview-body">
+      <div class="preview-loading">正在加载预览</div>
     </div>
   </div>
 </div>
@@ -590,6 +631,46 @@ function appendMessage(msg) {
   el.scrollTop = el.scrollHeight;
 }
 
+// ═══ VISION: upload & recognize image ═══
+function openImagePicker() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = function() { sendVisionImage(this); };
+  input.click();
+}
+
+async function sendVisionImage(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!userId) { toast('请先登录'); return; }
+  // Show user message immediately
+  const time = new Date().toLocaleTimeString('zh-CN', {hour:'2-digit',minute:'2-digit'});
+  appendMessage({from: userId, text: `📷 [图片] ${file.name}`, time, isSelf: true});
+  // Show loading
+  const loadingMsg = document.createElement('div');
+  loadingMsg.className = 'msg other';
+  loadingMsg.innerHTML = '🔄 正在识别图片...<div class="time"></div>';
+  document.getElementById('chat-messages').appendChild(loadingMsg);
+  const formData = new FormData();
+  formData.append('user_id', userId);
+  formData.append('image', file);
+  try {
+    const resp = await fetch('/api/chat/vision', { method:'POST', body: formData });
+    const result = await resp.json();
+    loadingMsg.remove();
+    if (!result.ok) {
+      appendMessage({from: 'AI', text: '❌ ' + (result.error || '识别失败'), time, isSelf: false});
+      return;
+    }
+    // AI result will come via SSE, no need to append here
+  } catch(e) {
+    loadingMsg.remove();
+    appendMessage({from: 'AI', text: '❌ 网络错误: ' + e.message, time, isSelf: false});
+  }
+  input.value = '';
+}
+
 document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 document.getElementById('chat-send').addEventListener('click', sendMessage);
 
@@ -788,6 +869,7 @@ async function loadDiskDir(path) {
           <div class="meta">${[size, time].filter(Boolean).join(' · ')}</div>
         </div>
         <div class="actions">
+          ${f.is_dir ? '' : `<button onclick="event.stopPropagation();diskPreview('${encodeURIComponent(path === '/' ? '' : path)}/${encodeURIComponent(f.name)}'.replace(/%2F/g,'/'))">👁</button>`}
           ${f.is_dir ? '' : `<button onclick="event.stopPropagation();diskDownload('${encodeURIComponent(path === '/' ? '' : path)}/${encodeURIComponent(f.name)}'.replace(/%2F/g,'/'))">⬇ 下载</button>`}
           <button class="del" onclick="event.stopPropagation();diskDelete('${f.name}')">🗑</button>
         </div>
@@ -890,6 +972,89 @@ async function diskDownload(path) {
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     toast('✅ 开始下载');
   } catch(e) { toast('❌ 下载失败: ' + e.message); }
+}
+
+async function diskPreview(path) {
+  if (!activeServerId) return;
+  const cleanPath = decodeURIComponent(path);
+  document.getElementById('preview-filename').textContent = cleanPath.split('/').pop();
+  document.getElementById('preview-body').innerHTML = '<div class="preview-loading">正在加载预览</div>';
+  document.getElementById('preview-modal').classList.add('show');
+  try {
+    const resp = await fetch(`/api/disks/${activeServerId}/preview?path=${encodeURIComponent(cleanPath)}`);
+    const result = await resp.json();
+    if (!result.ok) {
+      document.getElementById('preview-body').innerHTML = `<div class="empty-preview">❌ ${result.error || '预览失败'}</div>`;
+      return;
+    }
+    let html = '';
+    if (result.type === 'image') {
+      html = `<img src="${result.data}" alt="${result.filename}" onerror="this.parentElement.innerHTML='<div class=\\\'empty-preview\\\'>❌ 图片加载失败</div>'">`;
+    } else if (result.type === 'text') {
+      html = `<pre>${escapeHtml(result.content)}</pre>`;
+    } else if (result.type === 'word') {
+      html = `<pre>${escapeHtml(result.text)}</pre>`;
+      if (result.tables && result.tables.length > 0) {
+        html += '<hr style="margin:16px 0;border:none;border-top:1px solid #e5e5ea"><div style="font-size:12px;color:#8e8e93;margin-bottom:8px">📋 表格数据</div>';
+        result.tables.forEach((t, ti) => {
+          html += `<div style="font-size:11px;color:#8e8e93;margin-bottom:4px">表格 ${ti + 1}</div><table style="display:table;font-size:12px;margin-bottom:12px">`;
+          t.forEach((row, ri) => {
+            html += '<tr>' + row.map(c => (ri === 0 ? '<th>' : '<td>') + escapeHtml(c) + (ri === 0 ? '</th>' : '</td>')).join('') + '</tr>';
+          });
+          html += '</table>';
+        });
+      }
+    } else if (result.type === 'excel') {
+      const sheetNames = result.sheets.map(s => s.name);
+      html += '<div class="sheet-tabs">';
+      sheetNames.forEach((name, i) => {
+        html += `<button class="sheet-tab ${i === 0 ? 'active' : ''}" onclick="switchSheet(${i})">${escapeHtml(name)}</button>`;
+      });
+      html += '</div>';
+      result.sheets.forEach((sheet, si) => {
+        html += `<table id="sheet-${si}" class="${si === 0 ? 'active' : ''}">`;
+        sheet.rows.forEach((row, ri) => {
+          html += '<tr>' + row.map(c => (ri === 0 ? '<th>' : '<td>') + escapeHtml(c) + (ri === 0 ? '</th>' : '</td>')).join('') + '</tr>';
+        });
+        html += '</table>';
+      });
+    } else if (result.type === 'ppt') {
+      result.slides.forEach((slide, i) => {
+        html += '<div class="slide-section">';
+        html += `<div class="slide-label">📄 第 ${i + 1} 页</div>`;
+        if (slide.length === 0) {
+          html += '<p style="color:#8e8e93">（空白页）</p>';
+        } else {
+          slide.forEach(t => { html += `<p>${escapeHtml(t)}</p>`; });
+        }
+        html += '</div>';
+      });
+      if (result.slides.length === 0) {
+        html = '<div class="empty-preview">📄 此PPT暂无文字内容</div>';
+      }
+    } else if (result.type === 'pdf') {
+      html = `<div style="text-align:center;padding:20px">
+        <div style="font-size:48px;margin-bottom:12px">📕</div>
+        <div style="font-size:14px;color:#1d1d1f;margin-bottom:8px">${escapeHtml(result.filename)}</div>
+        <div style="font-size:12px;color:#8e8e93;margin-bottom:20px">${formatSize(result.size)}</div>
+        <button onclick="window.location.href='${result.url}'" style="padding:10px 28px;background:#007aff;color:#fff;border:none;border-radius:10px;font-size:14px;cursor:pointer">📕 下载查看</button>
+      </div>`;
+    }
+    document.getElementById('preview-body').innerHTML = html;
+  } catch(e) {
+    document.getElementById('preview-body').innerHTML = `<div class="empty-preview">❌ 预览失败: ${e.message}</div>`;
+  }
+}
+
+function switchSheet(idx) {
+  document.querySelectorAll('.sheet-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+  document.querySelectorAll('.preview-body table').forEach((t, i) => t.classList.toggle('active', i === idx));
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 let confirmCallback = null;
@@ -1145,6 +1310,82 @@ document.addEventListener('keydown', e => {
     closeDrawer();
   }
 });
+
+// ═══ BACKGROUND/RESUME: re-connect SSE and catch missed replies ═══
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden && userId) {
+    // User came back - re-establish SSE and catch missed replies
+    connectSSE();
+    fetchMissedMessages();
+  }
+});
+
+async function fetchMissedMessages() {
+  if (!userId) return;
+  try {
+    const resp = await fetch(`/api/chat/history?user_id=${encodeURIComponent(userId)}&model_idx=${aiActiveIdx}`);
+    const data = await resp.json();
+    if (!data.ok || !data.history) return;
+    const el = document.getElementById('chat-messages');
+    const existingCount = el.querySelectorAll('.msg').length;
+    if (data.history.length > existingCount) {
+      // Append only new messages
+      const newMsgs = data.history.slice(existingCount);
+      const ph = el.querySelector('div[style*="text-align:center"]');
+      if (ph) ph.remove();
+      newMsgs.forEach(msg => {
+        const div = document.createElement('div');
+        div.className = `msg ${msg.isSelf ? 'self' : 'other'}`;
+        div.innerHTML = `${msg.text}<div class="time">${msg.time || ''}</div>`;
+        el.appendChild(div);
+      });
+      el.scrollTop = el.scrollHeight;
+    }
+  } catch(_) {}
+}
+
+document.getElementById('server-drawer').addEventListener('click', function(e) {
+  if (e.target === this) closeDrawer();
+});
+
+// ═══ KEYBOARD ═══
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal.show').forEach(m => m.classList.remove('show'));
+    closeDrawer();
+  }
+});
+
+// ═══ BACKGROUND/RESUME: re-connect SSE and catch missed replies ═══
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden && userId) {
+    connectSSE();
+    fetchMissedMessages();
+  }
+});
+
+async function fetchMissedMessages() {
+  if (!userId) return;
+  try {
+    const resp = await fetch(`/api/chat/history?user_id=${encodeURIComponent(userId)}&model_idx=${aiActiveIdx}`);
+    const data = await resp.json();
+    if (!data.ok || !data.history) return;
+    const el = document.getElementById('chat-messages');
+    const existingCount = el.querySelectorAll('.msg').length;
+    if (data.history.length > existingCount) {
+      const newMsgs = data.history.slice(existingCount);
+      const ph = el.querySelector('div[style*="text-align:center"]');
+      if (ph) ph.remove();
+      newMsgs.forEach(msg => {
+        const div = document.createElement('div');
+        div.className = `msg ${msg.isSelf ? 'self' : 'other'}`;
+        div.innerHTML = `${msg.text}<div class="time">${msg.time || ''}</div>`;
+        el.appendChild(div);
+      });
+      el.scrollTop = el.scrollHeight;
+    }
+  } catch(_) {}
+}
 </script>
 </body>
 </html>
