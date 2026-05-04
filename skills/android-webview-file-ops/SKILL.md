@@ -197,4 +197,4 @@ Key points:
 
 ### Why this happens
 
-Android WebView's `onShowFileChooser` is a security-sensitive callback that requires **user initiation** — the user must physically tap on the `<input type="file">` element. This prevents silent file access via JavaScript. Unlike desktop browsers where `.click()` on hidden inputs works, Android's security model is stricter. The transparent overlay is the only reliable workaround. |
+Android WebView's `onShowFileChooser` is a security-sensitive callback that requires **user initiation** — the user must physically tap on the `<input type="file">` element. This prevents silent file access via JavaScript. Unlike desktop browsers where `.click()` on hidden inputs works, Android's security model is stricter. The transparent overlay is the only reliable workaround.
