@@ -1,7 +1,7 @@
 ---
 name: flask-byok-ai-proxy
 description: "Build a Flask-based AI chat proxy where each user brings their own API key, base URL, and model — the server relays requests and stores credentials per-user with a settings UI."
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 ---
 
