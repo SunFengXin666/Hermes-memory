@@ -428,6 +428,387 @@ function receiveMessage(data) {
 
 To keep the history display in sync on initial load, persist `active_idx` from the login response:
 
+## User Authentication & Persistent Profiles
+
+For multi-user apps where data (AI configs, servers, memory) must survive server restarts and work across devices, add password-based authentication with file-backed user profiles.
+
+### Storage: JSON User Profiles
+
+```python
+import hashlib
+
+USER_DIR = Path('/tmp/im-app-users')
+USER_DIR.mkdir(parents=True, exist_ok=True)
+USER_LOCK = threading.Lock()
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def load_user_profile(username: str) -> dict | None:
+    file_path = USER_DIR / f'{username}.json'
+    if not file_path.exists():
+        return None
+    with USER_LOCK:
+        try:
+            return json.loads(file_path.read_text(encoding='utf-8'))
+        except Exception:
+            return None
+
+def save_user_profile(username: str, profile: dict):
+    file_path = USER_DIR / f'{username}.json'
+    with USER_LOCK:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(profile, f, ensure_ascii=False, indent=2)
+```
+
+Profile structure:
+```json
+{
+  "password_hash": "sha256hex...",
+  "ai_presets": [{"name":"DeepSeek","api_key":"...","base_url":"http://...","model":"..."}],
+  "ai_active": 1,
+  "servers": [{"name":"My Server","host":"...","port":22,"username":"root","password":"..."}],
+  "memory": "Personal notes about the user",
+  "created_at": 1234567890.0
+}
+```
+
+### Auth Endpoints
+
+```python
+@app.route('/api/auth/register', methods=['POST'])
+def auth_register():
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    if not username or not password:
+        return jsonify({'ok': False, 'error': '用户名和密码不能为空'}), 400
+    if len(username) < 2 or len(password) < 4:
+        return jsonify({'ok': False, 'error': '用户名至少2字符，密码至少4字符'}), 400
+    if load_user_profile(username):
+        return jsonify({'ok': False, 'error': '用户名已存在'}), 400
+    profile = {
+        'password_hash': hash_password(password),
+        'ai_presets': [], 'ai_active': 0,
+        'servers': [], 'memory': '', 'created_at': time.time(),
+    }
+    save_user_profile(username, profile)
+    return jsonify({'ok': True})
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    profile = load_user_profile(username)
+    if not profile:
+        return jsonify({'ok': False, 'error': '用户不存在'}), 400
+    if profile.get('password_hash') != hash_password(password):
+        return jsonify({'ok': False, 'error': '密码错误'}), 400
+    # Load profile into in-memory config
+    ai_configs[username] = {
+        'presets': profile.get('ai_presets', []),
+        'active': profile.get('ai_active', 0),
+    }
+    return jsonify({
+        'ok': True,
+        'profile': {
+            'ai_presets': profile.get('ai_presets', []),
+            'ai_active': profile.get('ai_active', 0),
+            'servers': profile.get('servers', []),
+            'memory': profile.get('memory', ''),
+        }
+    })
+```
+
+### Profile Save Endpoint (for servers & memory)
+
+```python
+@app.route('/api/user/profile', methods=['POST'])
+def user_profile():
+    data = request.json
+    user_id = data.get('user_id', '')
+    profile = load_user_profile(user_id)
+    if not profile:
+        return jsonify({'ok': False, 'error': '用户不存在'}), 400
+    if 'servers' in data:
+        profile['servers'] = data['servers']
+    if 'memory' in data:
+        profile['memory'] = data['memory']
+    save_user_profile(user_id, profile)
+    return jsonify({'ok': True})
+```
+
+### Auto-Persist AI Config on Every Change
+
+Modify the `POST /api/chat/config` handler to also save to the profile:
+
+```python
+@app.route('/api/chat/config', methods=['GET', 'POST'])
+def chat_config():
+    # ...
+    if request.method == 'POST':
+        ai_configs[user_id] = {
+            'presets': data.get('presets', []),
+            'active': data.get('active', 0),
+        }
+        # Also persist to user profile
+        profile = load_user_profile(user_id)
+        if profile:
+            profile['ai_presets'] = data.get('presets', [])
+            profile['ai_active'] = data.get('active', 0)
+            save_user_profile(user_id, profile)
+        return jsonify({'ok': True})
+```
+
+### Frontend: Login + Register UI
+
+Replace the simple nickname login with username + password fields and a register button:
+
+```html
+<input type="text" id="login-name" placeholder="用户名">
+<input type="password" id="login-password" placeholder="密码">
+<button onclick="doLogin()">登录</button>
+<button onclick="doRegister()">注册新账号</button>
+```
+
+```javascript
+async function doLogin() {
+  const name = document.getElementById('login-name').value.trim();
+  const password = document.getElementById('login-password').value;
+  const resp = await fetch('/api/auth/login', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({username: name, password: password}),
+  });
+  const data = await resp.json();
+  if (!data.ok) { toast(data.error); return; }
+  await onAuthSuccess(name, data.profile);
+}
+
+async function doRegister() {
+  // register, then auto-login
+  // on success: await onAuthSuccess(name, loginData.profile);
+}
+
+async function onAuthSuccess(name, profile) {
+  userId = name;
+  aiPresets = profile.ai_presets || [];
+  aiActiveIdx = profile.ai_active || 0;
+  savedServers = profile.servers || [];
+  // Also save servers locally so they work offline
+  localStorage.setItem('im_servers', JSON.stringify(savedServers));
+  if (profile.memory) {
+    document.getElementById('memory-text').value = profile.memory;
+  }
+  updateAiDisplay();
+  initChat();
+}
+```
+
+When saving servers (via `connectServer`), also persist to the user profile:
+
+```javascript
+// After saving to localStorage:
+fetch('/api/user/profile', {
+  method: 'POST', headers: {'Content-Type':'application/json'},
+  body: JSON.stringify({ user_id: userId, servers: savedServers }),
+}).catch(() => {});
+```
+
+## AI Function Calling for Tool Execution (e.g. Cloud Disk Control)
+
+The AI can be given tools to execute real operations (SFTP file management, etc.) via OpenAI-compatible function calling. This bridges the chat AI and the backend operations.
+
+### Tool Definitions
+
+Define tools as OpenAI function definitions:
+
+```python
+CLOUD_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "列出云盘目录下的文件和文件夹",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "目录路径"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_text_file",
+            "description": "读取云盘上的文本文件内容",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "文件的完整路径"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_item",
+            "description": "删除云盘上的文件或空目录",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "要删除的路径"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_directory",
+            "description": "在云盘上创建新目录",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "要创建的目录路径"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_disk_usage",
+            "description": "获取云盘的磁盘使用情况",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+]
+```
+
+### Route Tools to Users via `user_id`
+
+In `disk_connect`, store `user_id` in the connection info so the AI can find the right server:
+
+```python
+@app.route('/api/disks/connect', methods=['POST'])
+def disk_connect():
+    data = request.json
+    user_id = data.get('user_id', '')
+    # ...
+    sftp_connections[conn_id] = {'client': client, 'sftp': sftp, 'info': {**data, 'user_id': user_id}}
+```
+
+Then in the tool execution function, look up the user's connection by `user_id`:
+
+```python
+def execute_cloud_tool(user_id: str, func_name: str, args: dict) -> dict:
+    # Find the user's active connection
+    conn_info = None
+    for cid, conn in list(sftp_connections.items()):
+        if conn['info'].get('user_id') == user_id:
+            conn_info = conn['info']
+            break
+    if not conn_info:
+        return {"error": "你没有连接的云盘服务器"}
+    
+    # Fresh SFTP connection for each tool call
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(conn_info['host'], port=...)
+    sftp = client.open_sftp()
+    
+    # Execute the requested operation
+    if func_name == 'list_files':
+        items = sftp.listdir_attr(path)
+        # return structured file list
+    elif func_name == 'read_text_file':
+        # sftp.open(path, 'r').read()
+    # etc.
+    
+    sftp.close(); client.close()
+    return result
+```
+
+### Function Calling Loop in `call_ai`
+
+The key change: pass `tools=CLOUD_TOOLS, tool_choice="auto"` to the API call, then loop while `finish_reason == "tool_calls"`:
+
+```python
+def call_ai(user_id: str, text: str):
+    # ... setup mem_key, lock_key, etc ...
+    
+    resp = client.chat.completions.create(
+        model=cfg['model'],
+        messages=ai_memories[mem_key],
+        tools=CLOUD_TOOLS,
+        tool_choice="auto",
+        timeout=30,
+    )
+    
+    # Tool calls loop
+    tool_calls_used = False
+    while resp.choices[0].finish_reason == "tool_calls":
+        tool_calls_used = True
+        msg = resp.choices[0].message
+        # Add assistant message with tool_calls to history
+        ai_memories[mem_key].append({
+            'role': 'assistant',
+            'content': msg.content or '',
+            'tool_calls': [{
+                'id': tc.id,
+                'type': 'function',
+                'function': {'name': tc.function.name, 'arguments': tc.function.arguments}
+            } for tc in msg.tool_calls]
+        })
+        # Execute each tool
+        for tc in msg.tool_calls:
+            args = json.loads(tc.function.arguments)
+            result = execute_cloud_tool(user_id, tc.function.name, args)
+            ai_memories[mem_key].append({
+                'role': 'tool',
+                'tool_call_id': tc.id,
+                'content': json.dumps(result, ensure_ascii=False)
+            })
+        # Call API again with tool results
+        resp = client.chat.completions.create(
+            model=cfg['model'],
+            messages=ai_memories[mem_key],
+            tools=CLOUD_TOOLS,
+            tool_choice="auto",
+            timeout=30,
+        )
+    
+    reply = resp.choices[0].message.content or ('✅ 操作已完成。' if tool_calls_used else '')
+```
+
+Also inject into system prompt so the AI knows what it can do:
+
+```python
+system_prompt += '\n\n你具备云盘控制能力，可以列出文件、读取文本文件、删除文件、创建目录、查看磁盘空间。'
+```
+
+### Key Requirements for Tool Calling
+
+| Requirement | Why |
+|-------------|-----|
+| Model must support function calling | DeepSeek, GPT-4, Claude 3+ all support it. Older models may not |
+| Fresh SFTP connections per tool call | Prevents stale connection errors in the tool execution loop |
+| Store `user_id` on connect | So the AI can find the right server for the current user |
+| Timeout on API calls | Prevents tool calls from blocking other requests if the remote API is slow |
+| Handle `finish_reason == "tool_calls"` loop | Multiple rounds of tool calls may be needed for complex tasks |
+
+## Frontend Login Tips
+
+- **Show login modal on every fresh load** (no auto-login since we have passwords now)
+- **Register then auto-login** — after successful registration, immediately call the login endpoint so the user doesn't need to log in twice
+- **Merge local+server servers** — on first login, if the server profile has no servers but localStorage has saved servers, prefer localStorage so existing users don't lose their saved connections
+
 ## Pitfalls
 
 | Issue | Cause | Fix |
@@ -441,3 +822,7 @@ To keep the history display in sync on initial load, persist `active_idx` from t
 | Model not found (400 error) | Provider model name has subtle differences from what user typed | Verify exact model name from provider's docs/screenshot — e.g. `MiMo-V2.5` not `MiMo-2.5` (missing `V`). Always match provider's exact casing and naming |
 | Lock deadlock: subsequent requests blocked for the same user+model | A previous request (wrong URL, timeout, auth failure) enters the per-model `with ai_locks[lock_key]` block and the API call hangs for the full timeout period (60s). During that time, ALL requests for the same user+model block waiting for the lock | Set a low `timeout` on `client.chat.completions.create(timeout=30)` so failed requests release the lock quickly. Also restart the server to clear stuck locks. For production, use `threading.Lock.acquire(timeout=...)` with fallback |
 | API Key lost / "Invalid API Key" for third-party provider | Most platforms (MiMo, etc.) only show the API key **once at creation time** | Tell user to regenerate a new key on the provider's platform. Never store keys in client-side code |
+| Tool call hangs / no response | The API model doesn't support function calling, or Hermes/Ollama isn't configured for it | Verify model supports tools. Check `resp.choices[0].finish_reason` — if `"stop"` instead of `"tool_calls"`, the model ignored the tools |
+| Tool execution fails with "no connection" | User hasn't connected a cloud disk server, or connection timed out | Make the tool handle the no-connection case gracefully (return descriptive error for the AI to explain to the user) |
+| Tool result too long (>model context window) | `du -sb` or `ls -la` returns huge output for directories with many files | Limit results: return only first 100 files. Truncate text files to first 2000 chars |
+| Duplicate tool calls / infinite loop | AI keeps calling the same tool without making progress | Add max_tool_calls limit (e.g., 10 iterations) and break the loop |

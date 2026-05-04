@@ -188,49 +188,78 @@ async function diskDelete(name) {
 
 ## Disk Usage Endpoint
 
-Two approaches for getting disk usage:
+Three approaches, choose based on your use case:
 
-### Preferred: `statvfs` (SFTP native)
+### Option A: `statvfs` (SFTP native, partition-level)
 
 ```python
-@app.route('/api/disks/<conn_id>/usage', methods=['GET'])
-def disk_usage(conn_id):
-    conn = sftp_connections.get(conn_id)
-    info = conn['info']
-    client = paramiko.SSHClient()
-    client.connect(...)
-    sftp = client.open_sftp()
-    stat = sftp.statvfs('/home/ubuntu/yunpan')
-    total = stat.f_blocks * stat.f_frsize
-    free = stat.f_bavail * stat.f_frsize
-    used = total - free
-    sftp.close(); client.close()
-    return jsonify({'ok': True, 'total': total, 'used': used, 'free': free})
+sftp = client.open_sftp()
+stat = sftp.statvfs('/path')
+total = stat.f_blocks * stat.f_frsize
+free = stat.f_bavail * stat.f_frsize
+used = total - free
 ```
 
-### Fallback: `df -B1` via SSH
-
-Some SFTP servers don't support `statvfs` (returns 400 error). Use SSH `exec_command` as fallback:
+### Option B: `df -B1` via SSH (fallback, partition-level)
 
 ```python
-import re
-
-client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(host, port=port, username=user, password=pw, timeout=15)
 stdin, stdout, stderr = client.exec_command("df -B1 /path | tail -1")
 output = stdout.read().decode().strip()
-client.close()
 parts = output.split()
 if len(parts) >= 4:
     total = int(parts[1])
     used = int(parts[2])
     free = int(parts[3])
-else:
-    # fallback error
 ```
 
+### Option C: `du -sb` + quota (directory-level, preferred for quota-based plans)
+
+For apps where users have a fixed quota (e.g., 20GB) and you want to show usage of **only their directory** (not the entire partition):
+
+```python
+QUOTA_BYTES = 20 * 1024 * 1024 * 1024  # 20GB
+
+stdin, stdout, stderr = client.exec_command("du -sb /home/ubuntu/yunpan | cut -f1")
+output = stdout.read().decode().strip()
+used = int(output) if output else 0
+free = max(0, QUOTA_BYTES - used)
+```
+
+**Why use this**: `df` reports the entire partition's usage. If the partition is 500GB but the user only has a 20GB quota in their `/home/ubuntu/yunpan` directory, `du -sb` gives the correct directory-level usage.
+
 Display as a colored progress bar: green (<60%), orange (60-85%), red (>85%), refreshed after upload/delete.
+
+## AI Function Calling for SFTP Tools (Bridging Chat + File Manager)
+
+When the Flask app has both a chat AI and an SFTP file manager, you can let the AI control the file system via OpenAI-compatible function calling. This means the user can say "list my files" or "read config.json" in the chat and get results.
+
+### Architecture
+
+The chat AI gets tool definitions for SFTP operations. When the AI "calls" a tool, the backend executes it via a fresh SFTP connection and feeds the result back to the AI.
+
+### Prerequisites
+
+1. **Store `user_id` on connect** — so the AI can find the right server for the current user
+2. **Fresh SFTP connections per tool call** — each tool execution creates a new SSH+SFTP session
+3. **The AI model must support function calling** (DeepSeek, GPT-4, Claude 3+)
+
+### Implementation Summary
+
+The SFTP tools are:
+- `list_files(path)` → returns file listing with names, sizes, types
+- `read_text_file(path)` → returns text content
+- `delete_item(path)` → deletes file or empty directory
+- `create_directory(path)` → creates directory
+- `get_disk_usage()` → returns quota-based usage statistics
+
+See `flask-byok-ai-proxy` skill for the full tool definition and function calling loop implementation.
+
+### Pitfall: Tool Result Size
+
+`du -sb` or recursive file listings can return large results. Truncate to prevent context window overflow:
+- Limit file listings to first 100 entries
+- Truncate text file reads to first 2000 characters
+- Return error if directory has too many files
 
 ## Pitfalls
 
