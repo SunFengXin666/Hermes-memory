@@ -223,6 +223,60 @@ async function saveAiConfigEditor() {
 ```
 This keeps the settings page clean — sensitive API keys and provider details are only visible when the user explicitly taps to edit.
 
+### Typing Indicator (AI is thinking)
+
+Add a visual "AI 正在输入 ● ● ●" indicator while the AI is generating a reply. This improves UX by giving the user feedback that their message was received and the AI is working.
+
+**Pattern**: Show the indicator when the user's own message appears via SSE (meaning the server is now processing). Hide it when the AI's reply arrives via SSE.
+
+**CSS**:
+```css
+/* Typing indicator with bouncing dots */
+.typing-indicator{padding:12px 16px;display:flex;align-items:center;gap:8px;font-size:13px;color:#8e8e93}
+.typing-dots{display:flex;gap:3px}
+.typing-dots span{width:6px;height:6px;border-radius:50%;background:#c7c7cc;animation:typingBounce 1.4s ease-in-out infinite}
+.typing-dots span:nth-child(1){animation-delay:0s}
+.typing-dots span:nth-child(2){animation-delay:.2s}
+.typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes typingBounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+```
+
+**JavaScript (added to `receiveMessage`)**:
+```javascript
+function receiveMessage(data) {
+  if (data.model_idx !== undefined && data.model_idx !== aiActiveIdx) return;
+  // Remove typing indicator when AI replies
+  if (!data.isSelf && data.from === 'AI') {
+    removeTypingIndicator();
+  }
+  appendMessage({from: data.from, text: data.text, time: data.time, isSelf: data.isSelf});
+  // Show typing indicator when user's own message appears (AI is thinking)
+  if (data.isSelf && !data.text.startsWith('📷 [')) {  // skip for image messages (has own loading)
+    showTypingIndicator();
+  }
+}
+
+function showTypingIndicator() {
+  removeTypingIndicator();
+  const el = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'typing-indicator';
+  div.id = 'typing-indicator';
+  div.innerHTML = '<span>AI 正在输入</span><div class="typing-dots"><span></span><span></span><span></span></div>';
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function removeTypingIndicator() {
+  const el = document.getElementById('typing-indicator');
+  if (el) el.remove();
+}
+```
+
+**Important**: Do NOT show the typing indicator for vision/image messages — they already have their own loading indicator ("🔄 正在识别图片..."). The check `!data.text.startsWith('📷 [')` prevents this conflict.
+
+Also remove the typing indicator when loading a new model's history in `selectAiModel` / `switchAiModel`, so old "AI is thinking" remnants don't persist after switching.
+
 ## Adding Vision / Image Recognition to the Chat
 
 When a user uploads an image in chat and wants AI to analyze it, you need a dedicated vision endpoint that calls a vision-capable model. This is separate from the text chat flow because most LLM providers separate vision and text capabilities into different models.
