@@ -1583,6 +1583,110 @@ try {
    ```\
    `touch-action: manipulation` tells the browser the element only supports single-finger tap gestures, so the browser can skip the double-tap-to-zoom delay. This is especially important for bottom-navigation buttons where delayed or dropped clicks feel like "buttons don't work."\n- **Server restart reminder**: After killing the Flask/Python server process (`fuser -k PORT/tcp`), always verify the new process started: `curl -s -o /dev/null -w '%{http_code}' http://localhost:PORT/`. If you forget to restart, the WebView will show `net::ERR_CONNECTION_REFUSED` and the user sees a blank error page.
 
+### Adding a Native Splash Screen
+
+For a professional first-launch feel (like QQ's penguin or WeChat's Earth), add a native splash screen overlay that fades out after the WebView loads:
+
+**Layout** — Use a `FrameLayout` to stack the WebView and a splash overlay:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <WebView
+        android:id="@+id/webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Splash overlay — sits on top of WebView, removed after fade -->
+    <LinearLayout
+        android:id="@+id/splash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:background="#007aff"
+        android:visibility="visible">
+
+        <TextView
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:text="友"
+            android:textSize="36sp"
+            android:textColor="#007aff"
+            android:gravity="center"
+            android:background="@drawable/splash_circle"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="App Name"
+            android:textSize="22sp"
+            android:textColor="#ffffff"
+            android:layout_marginTop="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Tagline"
+            android:textSize="13sp"
+            android:textColor="#b0d4ff"
+            android:layout_marginTop="6dp" />
+
+    </LinearLayout>
+</FrameLayout>
+```
+
+**Drawable** (`res/drawable/splash_circle.xml`):
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#ffffff" />
+    <size android:width="80dp" android:height="80dp" />
+</shape>
+```
+
+**Java** — Start loading WebView immediately, show splash for 1.5s, then fade out:
+
+```java
+// In onCreate(), after webView.loadUrl(serverUrl):
+webView.loadUrl(serverUrl);
+
+// Show splash for 1.5 seconds, then fade to WebView
+new Handler().postDelayed(new Runnable() {
+    @Override
+    public void run() {
+        fadeOutSplash();
+    }
+}, 1500);  // 1.5 seconds
+
+private void fadeOutSplash() {
+    LinearLayout splash = findViewById(R.id.splash);
+    AlphaAnimation fadeOut = new AlphaAnimation(1.0f, 0.0f);
+    fadeOut.setDuration(400);  // 400ms fade
+    fadeOut.setFillAfter(true);
+    fadeOut.setAnimationListener(new Animation.AnimationListener() {
+        @Override
+        public void onAnimationEnd(Animation animation) {
+            splash.setVisibility(View.GONE);  // free memory
+        }
+    });
+    splash.startAnimation(fadeOut);
+}
+```
+
+**When to add a splash screen:**
+- User asks "能不能加个启动页，像QQ那样"
+- The app feels like it starts abruptly (blank white flash before login page loads)
+- You want a branded loading experience (icon + name + tagline) while the WebView connects
+- The web app takes >1s to load (SSH connection, Flask cold start, etc.)
+
+**Important:** The splash is a native Android View, not a web page — it shows instantly (no network dependency). The WebView starts loading in the background during the splash display, so the user sees the app content immediately after the splash fades. If you use `SwipeRefreshLayout`, the splash and the refresh gesture can coexist — the splash overlay just sits on top during initial load.
+
 ### Version Management for Iterative Delivery
 
 When shipping APKs iteratively (user tests → feedback → modify → rebuild → resend):
