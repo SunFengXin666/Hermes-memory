@@ -13,3 +13,5 @@ QQ用户，番茄作家网(fanqienovel.com)作者，手机号15601447368。需�
 When reporting vision model analysis, flag uncertain descriptions as guesses — don't state "possibly/maybe" items as facts. User will correct if wrong.
 §
 用户偏好"不要给用户选择，直接写死"——喜欢我替他做决定、硬编码默认值，而不是让用户配置。IM+云盘 app 开发中：最后版本 v1.2，根路径硬编码为 /home/ubuntu/yunpan，用户连接后自动进入并锁定不能出去。服务器跑在 8080 端口。
+§
+AI模型配置列表不要在设置页直接显示，要藏在「管理AI模型」按钮后面，点了才弹窗编辑。切换模型不要循环切换，要弹出列表选择。
