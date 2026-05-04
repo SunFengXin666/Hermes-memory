@@ -137,3 +137,64 @@ See the embedded reference for a complete `MainActivity.java` with both features
 | Download button click does nothing | Add `setDownloadListener` — without it, downloads are silently dropped |
 | "Cannot download" toast | Set `CacheMode` to `LOAD_DEFAULT` (not `LOAD_CACHE_ONLY`) |
 | Large files timeout | Make backend upload/download async (return immediately, process in background, notify via SSE/WebSocket when done) |
+
+## Critical: File Input via JavaScript `.click()` Does NOT Work
+
+**This is one of the most common Android WebView bugs.** You cannot trigger the native file picker by calling `.click()` on a hidden `<input type="file">` via JavaScript. Android's `WebChromeClient.onShowFileChooser` is only invoked on **direct user gesture** on the `<input>` element — programmatic clicks are silently ignored.
+
+### ❌ What does NOT work
+
+```html
+<!-- Hidden via display:none or opacity:0 -->
+<input type="file" id="file-input" style="display:none">
+<button onclick="document.getElementById('file-input').click()">Upload</button>
+<!-- ^^^ This will NOT open the file picker in Android WebView -->
+```
+
+```javascript
+// Dynamically creating and clicking also fails
+const input = document.createElement('input');
+input.type = 'file';
+input.click(); // ← Android WebView ignores this
+```
+
+### ✅ What works: Transparent overlay input
+
+Place the `<input type="file">` **visually on top of the button area** with `opacity:0`. The user taps the button area but actually taps the file input directly:
+
+```html
+<div style="position:relative; width:36px; height:36px;">
+  <!-- Transparent file input on top (catches taps) -->
+  <input type="file" accept="image/*"
+    style="position:absolute; top:0; left:0; width:100%; height:100%;
+           opacity:0; z-index:2; cursor:pointer; font-size:0">
+  <!-- Visual icon underneath (user sees this) -->
+  <span style="position:absolute; top:0; left:0; width:100%; height:100%;
+               display:flex; align-items:center; justify-content:center;
+               font-size:20px; z-index:1; color:#8e8e93; pointer-events:none">
+    🖼
+  </span>
+</div>
+```
+
+Key points:
+- `opacity:0` makes the input invisible but still interactive
+- `position:absolute` places it exactly over the visual button
+- `z-index:2` ensures the input is on top of the icon (which gets `z-index:1` and `pointer-events:none`)
+- `font-size:0` prevents the default file input label text from showing
+- The user taps the icon area → Android recognizes it as a **direct gesture** on the `<input>` → `onShowFileChooser` fires → native file picker opens
+
+### Alternative: Use a `<label>` element
+
+```html
+<label style="cursor:pointer">
+  <input type="file" accept="image/*" style="display:none" onchange="handleFile(this)">
+  <span>📷 Upload</span>
+</label>
+```
+
+`<label>` tapping triggers the associated input natively in most browsers, but **does NOT work in Android WebView** — it has the same limitation as `.click()`. Stick with the transparent overlay approach.
+
+### Why this happens
+
+Android WebView's `onShowFileChooser` is a security-sensitive callback that requires **user initiation** — the user must physically tap on the `<input type="file">` element. This prevents silent file access via JavaScript. Unlike desktop browsers where `.click()` on hidden inputs works, Android's security model is stricter. The transparent overlay is the only reliable workaround. |
