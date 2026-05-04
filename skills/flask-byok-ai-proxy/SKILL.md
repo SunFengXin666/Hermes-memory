@@ -223,6 +223,135 @@ async function saveAiConfigEditor() {
 ```
 This keeps the settings page clean — sensitive API keys and provider details are only visible when the user explicitly taps to edit.
 
+## Adding Vision / Image Recognition to the Chat
+
+When a user uploads an image in chat and wants AI to analyze it, you need a dedicated vision endpoint that calls a vision-capable model. This is separate from the text chat flow because most LLM providers separate vision and text capabilities into different models.
+
+### Architecture
+
+```
+User taps 🖼 → picks image → POST /api/chat/vision (multipart: image + user_id)
+  → Server saves to temp → base64 encodes → calls vision model (e.g. MiMo, GPT-4o-mini-vision)
+  → Saves user+AI messages to chat history → Pushes via SSE
+  → Frontend receives AI reply with analysis
+```
+
+### Key Design Decisions
+
+1. **Use a dedicated vision model** — Don't rely on the user's active text model to support vision (most don't). Hardcode a specific vision-capable model and API key on the server side.
+2. **Server-side vision call** — The image is uploaded to the Flask server, which converts it to base64 and sends to the vision API. Never send raw images client-side to the LLM.
+3. **Save to chat history** — Both the user's image message and the AI's analysis result should be saved so they persist across sessions.
+4. **Push via SSE** — The result arrives asynchronously (not as the HTTP response to the upload). The frontend shows a loading state, then the AI reply arrives through the SSE stream.
+
+### Backend Endpoint
+
+```python
+# Hardcoded vision credentials (keep server-side, never expose to client)
+VISION_API_KEY = 'your-vision-api-key'
+VISION_BASE_URL = 'https://vision-provider.com/v1'
+VISION_MODEL = 'vision-model-name'
+
+@app.route('/api/chat/vision', methods=['POST'])
+def chat_vision():
+    user_id = request.form.get('user_id', '')
+    file = request.files.get('image')
+    if not user_id or not file:
+        return jsonify({'ok': False, 'error': '参数不全'}), 400
+
+    img_path = UPLOAD_DIR / f"vision_{uuid.uuid4().hex[:12]}_{file.filename}"
+    file.save(str(img_path))
+    try:
+        with open(img_path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode()
+        ext = os.path.splitext(file.filename)[1].lower() or '.png'
+        mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png'
+        data_url = f'data:{mime};base64,{b64}'
+
+        client = OpenAI(api_key=VISION_API_KEY, base_url=VISION_BASE_URL)
+        resp = client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[{
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': '请详细描述这张图片的内容'},
+                    {'type': 'image_url', 'image_url': {'url': data_url}},
+                ]
+            }],
+            max_tokens=500,
+            timeout=30,
+        )
+        reply = resp.choices[0].message.content or '（无法识别）'
+
+        # Save to chat history + push via SSE
+        active_idx = ai_configs.get(user_id, {}).get('active', 0)
+        save_message(user_id, {'from': user_id, 'text': f'📷 [图片] {file.filename}', ...}, active_idx)
+        save_message(user_id, {'from': 'AI', 'text': f'🖼 图片分析结果：\n{reply}', ...}, active_idx)
+        push_to_user(user_id, {'type': 'message', 'from': 'AI', 'text': f'🖼 图片分析结果：\n{reply}', ...})
+        
+        img_path.unlink(missing_ok=True)
+        return jsonify({'ok': True, 'reply': reply})
+    except Exception as e:
+        img_path.unlink(missing_ok=True)
+        return jsonify({'ok': False, 'error': f'图片识别失败: {str(e)}'}), 500
+```
+
+### Frontend: Image Picker in Chat Input
+
+Add a hidden `<input type="file" accept="image/*">` and a 🖼 button next to the send button:
+
+```html
+<div class="chat-input-area">
+  <input type="text" id="chat-input" placeholder="输入消息...">
+  <input type="file" id="vision-input" accept="image/*" style="display:none"
+         onchange="sendVisionImage(this)">
+  <button onclick="document.getElementById('vision-input').click()" title="图片识别">🖼</button>
+  <button id="chat-send">➤</button>
+</div>
+```
+
+```javascript
+async function sendVisionImage(input) {
+  const file = input.files[0];
+  if (!file) return;
+  // Show user message immediately
+  appendMessage({from: userId, text: `📷 [图片] ${file.name}`, time, isSelf: true});
+  // Show loading indicator
+  const loading = document.createElement('div');
+  loading.className = 'msg other';
+  loading.innerHTML = '🔄 正在识别图片...';
+  document.getElementById('chat-messages').appendChild(loading);
+  
+  const formData = new FormData();
+  formData.append('user_id', userId);
+  formData.append('image', file);
+  try {
+    const resp = await fetch('/api/chat/vision', { method:'POST', body: formData });
+    const result = await resp.json();
+    loading.remove();
+    if (!result.ok) {
+      appendMessage({from: 'AI', text: '❌ ' + (result.error || '识别失败'), ...});
+    }
+    // AI reply arrives via SSE, no need to append here
+  } catch(e) {
+    loading.remove();
+    appendMessage({from: 'AI', text: '❌ 网络错误: ' + e.message, ...});
+  }
+  input.value = '';
+}
+```
+
+**Important**: The AI's reply is delivered via SSE (Server-Sent Events), not as the HTTP response to the upload request. The `POST /api/chat/vision` endpoint saves the reply to chat history and pushes it via SSE. The frontend's `receiveMessage` handler will pick it up. The loading indicator is removed once the HTTP response confirms the server has processed the image.
+
+### Pitfalls
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Vision model API key hardcoded in source | User's text model config may not support vision | Keep vision key separate — hardcode on server or use a dedicated vision model provider |
+| Large images cause timeout/timeout | base64 encoding of multi-MB images | Limit file input to `accept="image/*"` (not video). Consider max size check on server side |
+| No vision model available | Provider doesn't offer vision, or API key invalid | Test vision endpoint separately before integrating. Use a known-working provider (GPT-4o, MiMo Omni, etc.) |
+| SSE double-delivery of vision result | Both `chat/vision` endpoint AND `chat/completion` push the same reply | Only push from one place — the vision endpoint handles its own SSE push. Don't also send the vision text through `chat/send` |
+| Image shows in uploaded file list but no AI analysis | Frontend waited for HTTP response instead of SSE | The `POST` response just confirms the server received the image. The actual AI reply comes through SSE moments later |
+
 ## Per-User Persistent Memory (User-Written)
 
 Each user can write personal notes ("about me") that get injected into the AI's system prompt. This survives server restarts.
