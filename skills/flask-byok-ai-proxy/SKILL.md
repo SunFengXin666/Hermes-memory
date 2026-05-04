@@ -435,7 +435,7 @@ For multi-user apps where data (AI configs, servers, memory) must survive server
 ### Storage: JSON User Profiles
 
 ```python
-import hashlib
+import hashlib, secrets, time
 
 USER_DIR = Path('/tmp/im-app-users')
 USER_DIR.mkdir(parents=True, exist_ok=True)
@@ -463,8 +463,9 @@ def save_user_profile(username: str, profile: dict):
 
 Profile structure:
 ```json
-{
+```
   "password_hash": "sha256hex...",
+  "token": "session_token_for_auto_login",
   "ai_presets": [{"name":"DeepSeek","api_key":"...","base_url":"http://...","model":"..."}],
   "ai_active": 1,
   "servers": [{"name":"My Server","host":"...","port":22,"username":"root","password":"..."}],
@@ -537,6 +538,112 @@ def user_profile():
         profile['memory'] = data['memory']
     save_user_profile(user_id, profile)
     return jsonify({'ok': True})
+```
+
+### Token Auto-Login (Persist Session Across App Restarts)
+
+Without auto-login, users must re-enter credentials every time they clear the app from recent tasks (killing the WebView's JS context). Fix: generate a session token on login, save it to localStorage, and auto-authenticate on page load.
+
+#### Backend: Token Generation on Login
+
+Modify the login endpoint to generate a token and store it in the profile:
+
+```python
+import secrets
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    # ... validate username/password ...
+    
+    # Generate session token
+    token = secrets.token_hex(32)
+    profile['token'] = token
+    save_user_profile(username, profile)
+    
+    return jsonify({
+        'ok': True,
+        'token': token,  # ← return token to frontend
+        'profile': { ... }
+    })
+```
+
+#### Backend: Token Verification Endpoint
+
+```python
+@app.route('/api/auth/token_login', methods=['POST'])
+def auth_token_login():
+    data = request.json
+    username = data.get('username', '').strip()
+    token = data.get('token', '')
+    if not username or not token:
+        return jsonify({'ok': False, 'error': '参数不全'}), 400
+    profile = load_user_profile(username)
+    if not profile:
+        return jsonify({'ok': False, 'error': '用户不存在'}), 400
+    if profile.get('token') != token:
+        return jsonify({'ok': False, 'error': 'token无效'}), 400
+    ai_configs[username] = profile_to_ai_config(profile)
+    return jsonify({
+        'ok': True,
+        'profile': { ... }
+    })
+```
+
+#### Frontend: Save Token & Auto-Login
+
+On successful login, save `{username, token}` to localStorage:
+
+```javascript
+// In onAuthSuccess:
+localStorage.setItem('im_auth', JSON.stringify({username: name, token: token}));
+```
+
+On page load, check for saved token and auto-login (instead of always showing the login modal):
+
+```javascript
+(function() {
+  const saved = localStorage.getItem('im_auth');
+  if (saved) {
+    try {
+      const auth = JSON.parse(saved);
+      if (auth.username && auth.token) {
+        autoLogin(auth.username, auth.token);
+        return;
+      }
+    } catch(_) {}
+  }
+  // No saved token - show login modal
+  document.getElementById('login-modal').classList.add('show');
+})();
+
+async function autoLogin(username, token) {
+  try {
+    const resp = await fetch('/api/auth/token_login', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, token}),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      await onAuthSuccess(username, data.profile, token);
+    } else {
+      // Token invalid - clear and show login
+      localStorage.removeItem('im_auth');
+      document.getElementById('login-modal').classList.add('show');
+    }
+  } catch(e) {
+    document.getElementById('login-modal').classList.add('show');
+  }
+}
+```
+
+### Pitfalls: Token Auto-Login
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Token never expires | Token stored permanently in profile | Add `token_expires_at` field, or regenerate token on each login |
+| Token stolen | Insecure localStorage in shared device | Personal app only — production would use HTTP-only cookies |
+| Token mismatch after server restart | Profile has no `token` field (created before this feature) | Login once to generate a token. `token_login` returns 400 with "token invalid", frontend falls back to login modal |
 ```
 
 ### Auto-Persist AI Config on Every Change
