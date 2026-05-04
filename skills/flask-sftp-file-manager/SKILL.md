@@ -261,7 +261,140 @@ See `flask-byok-ai-proxy` skill for the full tool definition and function callin
 - Truncate text file reads to first 2000 characters
 - Return error if directory has too many files
 
-## Pitfalls
+## File Preview (Word, Excel, PPT, Images, PDF, Text)
+
+Add in-browser file preview to the SFTP file manager so users can view Word, Excel, PPT, images, PDFs, and text files without downloading.
+
+### Required Libraries
+
+```bash
+pip install python-docx openpyxl python-pptx Pillow
+```
+
+### Preview Endpoint Pattern
+
+Key design: **read the file into memory via SFTP**, process it server-side, return the preview data as JSON:
+
+```python
+# Detect file type by extension
+PREVIEWABLE_IMAGES = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'}
+PREVIEWABLE_TEXT = {'.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.toml', '.log', '.sh'}
+
+@app.route('/api/disks/<conn_id>/preview', methods=['GET'])
+def disk_preview(conn_id):
+    conn = sftp_connections.get(conn_id)
+    path = request.args.get('path', '')
+    ext = os.path.splitext(path)[1].lower()
+    
+    # Fresh SFTP connection
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(info['host'], port=int(info.get('port', 22)),
+        username=info['username'], password=info.get('password', ''), timeout=15)
+    sftp = client.open_sftp()
+    
+    if ext in PREVIEWABLE_IMAGES:
+        # Read binary → base64 → data URI
+        with sftp.open(path, 'rb') as f:
+            raw = f.read()
+        mime = {'jpg':'image/jpeg','png':'image/png','gif':'image/gif'}.get(ext, 'image/png')
+        b64 = base64.b64encode(raw).decode()
+        result = {'ok': True, 'type': 'image', 'data': f'data:{mime};base64,{b64}'}
+    
+    elif ext == '.docx':
+        import io
+        from docx import Document
+        with sftp.open(path, 'rb') as f:
+            raw = f.read()
+        doc = Document(io.BytesIO(raw))
+        text = '\n'.join(p.text for p in doc.paragraphs)
+        tables = [[[cell.text for cell in row.cells] for row in table.rows] for table in doc.tables]
+        result = {'ok': True, 'type': 'word', 'text': text, 'tables': tables}
+    
+    elif ext in ('.xlsx', '.xls'):
+        import io
+        from openpyxl import load_workbook
+        with sftp.open(path, 'rb') as f:
+            raw = f.read()
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        sheets = []
+        for name in wb.sheetnames:
+            ws = wb[name]
+            rows = [[str(c) if c is not None else '' for c in row] for row in ws.iter_rows(values_only=True)]
+            sheets.append({'name': name, 'rows': rows})
+        wb.close()
+        result = {'ok': True, 'type': 'excel', 'sheets': sheets}
+    
+    elif ext == '.pptx':
+        import io
+        from pptx import Presentation
+        with sftp.open(path, 'rb') as f:
+            raw = f.read()
+        prs = Presentation(io.BytesIO(raw))
+        slides = []
+        for slide in prs.slides:
+            texts = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        if para.text.strip(): texts.append(para.text)
+                if shape.has_table:
+                    for row in shape.table.rows:
+                        texts.append(' | '.join(cell.text for cell in row.cells))
+            slides.append(texts)
+        result = {'ok': True, 'type': 'ppt', 'slides': slides}
+    
+    elif ext == '.pdf':
+        with sftp.open(path, 'rb') as f: raw = f.read()
+        b64 = base64.b64encode(raw).decode()
+        result = {'ok': True, 'type': 'pdf', 'data': f'data:application/pdf;base64,{b64}'}
+    
+    elif ext in PREVIEWABLE_TEXT:
+        with sftp.open(path, 'r') as f:
+            content = f.read(200000)  # max 200KB
+        result = {'ok': True, 'type': 'text', 'content': content}
+    
+    else:
+        result = {'ok': False, 'error': f'不支持预览 {ext} 格式'}
+    
+    sftp.close(); client.close()
+    return jsonify(result)
+```
+
+### Frontend Preview Modal
+
+Add a modal with a header (filename + close) and a scrollable body. Render different views based on `result.type`:
+
+- **image**: `<img src="${data}">`
+- **text**: `<pre>${escapeHtml(content)}</pre>`
+- **word**: `<pre>${text}</pre>` + tables rendered as `<table>`
+- **excel**: sheet tabs as buttons + per-sheet `<table>` with tab switching
+- **ppt**: slide sections with slide number labels
+- **pdf**: `<embed src="${data}" type="application/pdf">`
+
+Use a helper to escape HTML:
+
+```javascript
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+```
+
+### Pitfalls
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Large images crash browser | Base64 data too large | Limit images to ~10MB via SFTP `f.read(10*1024*1024)`, show error otherwise |
+| Excel with 10000+ rows | Memory + render overload | Limit rows with `ws.iter_rows(max_row=200)` for preview |
+| Word doc with complex formatting (tables in headers/footers, images) | python-docx doesn't extract these | Document limitations in UI — show what's extractable |
+| `.doc` (not `.docx`) unsupported | python-docx only handles .docx format | Return error message suggesting user convert to .docx |
+| Base64 inline PDF in mobile WebView | May fail on some Android browsers | Consider downloading as fallback for PDF |
+| SVGs with embedded scripts | XSS risk | Filter `<script>` tags from SVG content or render as <img>, not inline |
+| Preview button shows for unsupported file types | Extension not in any list | Add fallback — try reading as text, if that fails, show "不支持预览" |
+
+## Pitfalls (General)
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
