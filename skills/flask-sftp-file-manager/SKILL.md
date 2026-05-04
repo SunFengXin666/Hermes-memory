@@ -345,9 +345,14 @@ def disk_preview(conn_id):
         result = {'ok': True, 'type': 'ppt', 'slides': slides}
     
     elif ext == '.pdf':
+        # ⚠️ DO NOT use base64 data URI — Android WebView does not support
+        # <embed src="data:application/pdf;base64,...">. The embed silently
+        # fails (blank). Instead, download the PDF to a server temp directory
+        # and serve via HTTP URL.
         with sftp.open(path, 'rb') as f: raw = f.read()
-        b64 = base64.b64encode(raw).decode()
-        result = {'ok': True, 'type': 'pdf', 'data': f'data:application/pdf;base64,{b64}'}
+        local_pdf = DOWNLOAD_DIR / f"preview_{uuid.uuid4().hex[:8]}_{filename}"
+        local_pdf.write_bytes(raw)
+        result = {'ok': True, 'type': 'pdf', 'url': f'/dl/{local_pdf.name}', 'filename': filename, 'size': len(raw)}
     
     elif ext in PREVIEWABLE_TEXT:
         with sftp.open(path, 'r') as f:
@@ -370,7 +375,7 @@ Add a modal with a header (filename + close) and a scrollable body. Render diffe
 - **word**: `<pre>${text}</pre>` + tables rendered as `<table>`
 - **excel**: sheet tabs as buttons + per-sheet `<table>` with tab switching
 - **ppt**: slide sections with slide number labels
-- **pdf**: `<embed src="${data}" type="application/pdf">`
+- **pdf**: Download button with file info (not inline embed — Android WebView cannot render base64 PDF). Click triggers system DownloadManager.
 
 Use a helper to escape HTML:
 
@@ -390,7 +395,7 @@ function escapeHtml(str) {
 | Excel with 10000+ rows | Memory + render overload | Limit rows with `ws.iter_rows(max_row=200)` for preview |
 | Word doc with complex formatting (tables in headers/footers, images) | python-docx doesn't extract these | Document limitations in UI — show what's extractable |
 | `.doc` (not `.docx`) unsupported | python-docx only handles .docx format | Return error message suggesting user convert to .docx |
-| Base64 inline PDF in mobile WebView | May fail on some Android browsers | Consider downloading as fallback for PDF |
+| Base64 inline PDF in mobile WebView | Android WebView lacks a built-in PDF renderer for `data:application/pdf` URIs. `<embed src="data:...pdf...">` renders a blank white box with no error. | Download PDF to server `/tmp/` directory, serve via HTTP URL, and show a download button. The Android `DownloadListener` handles the download and the system PDF reader opens it. |
 | SVGs with embedded scripts | XSS risk | Filter `<script>` tags from SVG content or render as <img>, not inline |
 | Preview button shows for unsupported file types | Extension not in any list | Add fallback — try reading as text, if that fails, show "不支持预览" |
 
