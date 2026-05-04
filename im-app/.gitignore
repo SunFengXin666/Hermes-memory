@@ -1,2 +1,22 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+venv/
+.env
+
+# Android build
+app-android/.gradle/
+app-android/build/
+app-android/local.properties
+*.apk
+*.aab
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.iml
+.vscode/

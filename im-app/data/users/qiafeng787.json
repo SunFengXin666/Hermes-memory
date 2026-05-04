@@ -1,0 +1,19 @@
+{
+  "password_hash": "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a",
+  "ai_presets": [],
+  "ai_active": 0,
+  "servers": [
+    {
+      "name": "qiafeng",
+      "host": "81.70.229.222",
+      "port": 22,
+      "username": "ubuntu",
+      "password": "SunFengXin521?",
+      "key_file": "",
+      "base_path": "/home/ubuntu/yunpan"
+    }
+  ],
+  "memory": "",
+  "created_at": 1777897506.4871287,
+  "token": "8a6afcee549dbaf679bdf839a1576b10dac0fd376269177ed008e5688aa607b7"
+}

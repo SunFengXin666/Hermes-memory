@@ -1,0 +1,22 @@
+{
+  "password_hash": "bcb15f821479b4d5772bd0ca866c00ad5f926e3580720659cc80d39c9d09802a",
+  "ai_presets": [
+    {
+      "name": "MiMo",
+      "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+      "api_key": "",
+      "model": "MiMo-V2.5"
+    },
+    {
+      "name": "DeepSeek",
+      "base_url": "http://localhost:8642/v1",
+      "api_key": "44c7cddf60761d694d6c2f424e4a4b4fe9220d26f7327ded",
+      "model": "deepseek-v4-flash"
+    }
+  ],
+  "ai_active": 1,
+  "servers": [],
+  "memory": "",
+  "created_at": 1777896060.4409392,
+  "token": "deba3b18347539fa55f793decb1b2fcebfbe1af010afd1ade9719395f9e19b0d"
+}

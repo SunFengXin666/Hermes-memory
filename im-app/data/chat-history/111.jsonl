@@ -1,0 +1,20 @@
+{"from": "111", "text": "记住了，无论干什么都读取一遍github上面的记忆模块，当然每次完成任务也更新一下github上面的记忆模块", "time": "01:33", "isSelf": true}
+{"from": "AI", "text": "明白，记住了。\n\n**规则：** 每次任务前先拉 → `cd /root/hermes-memory-backup && bash sync.sh`（pull+copy+push），每次任务完成后再跑一次同步写入 GitHub。\n\non_session_end 自动触发一次，但我不依赖它，手动确保双端一致。", "time": "", "isSelf": false}
+{"from": "111", "text": "你给我干过什么？", "time": "01:33", "isSelf": true}
+{"from": "AI", "text": "目前我这边的**会话历史**只有3条非常短的对话记录，没有之前的工作记录。但我的**记忆模块**里存了不少关于你的信息：\n\n**我知道你的：**\n- 腾讯云服务器（北京区 49.232.224.90），安全组默认封端口\n- 装了 Hermes Agent + QQ Bot（app_id 1903820137），Flask面板（3000）和 Dashboard（9119）\n- Mihomo 代理，走 7890/7891\n- NapCat QQ Bot（Docker），能通过 ws://127.0.0.1:3001 给你QQ发消息\n- 番茄小说网作家「恰逢787」，小说《代码深处的体温》，/root/novel/ 有100章大纲\n- IM+云盘项目（Flask后端 + Android APK），根路径写死 /home/ubuntu/yunpan\n- GitHub 记忆备份规则（先拉后推）\n- 远程服务器 81.70.229.222（Tencent Cloud），有 Ollama\n\n**但是**之前的任务记录（部署、写代码、配环境等）可能不是在这个 Hermes 实例上做的，或者 session 库被清过，我搜不到历史了。\n\n如果你告诉我之前具体做过什么，我可以记下来，以后随时查。", "time": "", "isSelf": false}
+{"from": "111", "text": "不是有记忆.md嘛我记得", "time": "01:34", "isSelf": true}
+{"from": "AI", "text": "看到了！是你的 GitHub 记忆备份仓库里的文件：\n\n- **`MEMORY.md`** — 环境信息（代理、NapCat、番茄小说、远端服务器、APK 构建环境等）\n- **`USER.md`** — 你的偏好信息（中文用户、极简回复、QQ号、多 agent 编排、直接写死别给选择等）\n- **`SOUL.md`** — 几乎是空的（只留了个 Persona 模板头）\n\n这些内容和我的内部记忆基本一致。以后每次任务我：\n1. ✅ **开始前** → `sync.sh`（拉 GitHub）\n2. ✅ **完成后** → 再 `sync.sh`（推回 GitHub）\n\n两边信息同步，双重保障。", "time": "", "isSelf": false}
+{"from": "111", "text": "你好？", "time": "18:52", "isSelf": true}
+{"from": "AI", "text": "⚠️ AI出错了: Connection error.", "time": "", "isSelf": false}
+{"from": "111", "text": "？？？", "time": "18:56", "isSelf": true}
+{"from": "AI", "text": "⚠️ AI出错了: Connection error.", "time": "", "isSelf": false}
+{"from": "111", "text": "？？？", "time": "19:05", "isSelf": true}
+{"from": "111", "text": "？？？", "time": "19:05", "isSelf": true}
+{"from": "AI", "text": "⚠️ AI出错了: Connection error.", "time": "", "isSelf": false}
+{"from": "AI", "text": "⚠️ AI出错了: Error code: 400 - {'error': {'code': '400', 'message': 'Not supported model MiMo-2.5', 'param': 'Param Incorrect'}}", "time": "", "isSelf": false}
+{"from": "111", "text": "？？？", "time": "19:17", "isSelf": true}
+{"from": "AI", "text": "⚠️ AI出错了: Error code: 400 - {'error': {'code': '400', 'message': 'Not supported model MiMo-2.5', 'param': 'Param Incorrect'}}", "time": "", "isSelf": false}
+{"from": "111", "text": "你好", "time": "19:27", "isSelf": true}
+{"from": "AI", "text": "⚠️ AI出错了: Request timed out.", "time": "", "isSelf": false}
+{"from": "111", "text": "你好", "time": "19:29", "isSelf": true}
+{"from": "AI", "text": "⚠️ AI出错了: Request timed out.", "time": "", "isSelf": false}

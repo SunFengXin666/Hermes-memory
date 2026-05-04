@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.IMCloud" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="android:statusBarColor">#5865F2</item>
+        <item name="android:navigationBarColor">#2B2D31</item>
+        <item name="colorPrimary">#5865F2</item>
+        <item name="colorPrimaryDark">#4752C4</item>
+        <item name="android:windowBackground">#2B2D31</item>
+    </style>
+</resources>
