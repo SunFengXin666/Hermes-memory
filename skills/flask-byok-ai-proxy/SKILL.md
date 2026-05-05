@@ -1119,6 +1119,117 @@ system_prompt += '\n\n你具备云盘控制能力，可以列出文件、读取�
 - **Register then auto-login** — after successful registration, immediately call the login endpoint so the user doesn't need to log in twice
 - **Merge local+server servers** — on first login, if the server profile has no servers but localStorage has saved servers, prefer localStorage so existing users don't lose their saved connections
 
+## Alternative: Global File-Backed Provider Config (Single-User)
+
+For single-user Flask apps (no multi-user auth), use a simpler pattern: store all providers in a JSON file, discover models by scanning all providers, and auto-route chat requests to the correct provider based on the model name.
+
+### Architecture
+
+```
+providers.json (file) → GET /api/providers → management page
+                       → GET /api/models → all models from all providers
+                       → POST /api/chat (with model "gpt-4o")
+                           → Backend searches providers for "gpt-4o"
+                           → Uses matching provider's base_url + api_key
+                           → POST directly to that provider
+```
+
+### Provider Storage (JSON File)
+
+```python
+PROVIDERS_FILE = Path('/data/providers.json')
+
+def _load_providers():
+    if not PROVIDERS_FILE.exists(): return []
+    return json.loads(PROVIDERS_FILE.read_text())
+
+def _save_providers(providers):
+    PROVIDERS_FILE.write_text(json.dumps(providers, ensure_ascii=False, indent=2))
+```
+
+Entry structure:
+```python
+{'id': 'uuid', 'name': 'DeepSeek', 'base_url': 'https://api.deepseek.com/v1',
+ 'api_key': 'sk-xxx', 'models': ['deepseek-chat', 'deepseek-v4-flash']}
+```
+
+### CRUD API Endpoints
+
+- `GET /api/providers` — list all
+- `POST /api/providers` — add (name, base_url, api_key, models)
+- `DELETE /api/providers/<id>` — delete
+- `PUT /api/providers/<id>` — update
+
+### Model-Name-Based Dispatch (Core Pattern)
+
+Search all providers for the requested model, then use that provider's credentials:
+
+```python
+def _find_model_provider(model_name):
+    for p in _load_providers():
+        if model_name in p.get('models', []):
+            return p, model_name
+    return None, None
+
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    data = request.json
+    model = data.get('model', 'hermes-agent')
+    provider, actual_model = _find_model_provider(model)
+    if provider:
+        resp = requests.post(f"{provider['base_url']}/chat/completions", json={
+            'model': actual_model or model, 'messages': data.get('messages', []), 'stream': False
+        }, headers={'Authorization': f'Bearer {provider["api_key"]}', 'Content-Type': 'application/json'}, timeout=120)
+    else:
+        resp = requests.post(f'{DEFAULT_API}/chat/completions', json={
+            'model': model, 'messages': data.get('messages', []), 'stream': False
+        }, headers={'Authorization': f'Bearer {DEFAULT_KEY}'}, timeout=120)
+    return jsonify(resp.json())
+```
+
+### Models Discovery by Scanning
+
+The `/api/models` endpoint merges models from all providers:
+
+```python
+@app.route('/api/models', methods=['GET'])
+def models():
+    all_models = []
+    try:
+        resp = requests.get(f'{DEFAULT_API}/models', ...)
+        all_models = resp.json().get('data', [])
+    except: pass
+    providers = _load_providers()
+    existing_ids = {m['id'] for m in all_models}
+    for p in providers:
+        for m in p.get('models', []):
+            if m not in existing_ids:
+                all_models.append({'id': m, 'object': 'model', 'owned_by': p['name']})
+                existing_ids.add(m)
+    return jsonify({'data': all_models, 'object': 'list'})
+```
+
+### Frontend: Dedicated Model Management Page
+
+Create a standalone `/models` page (not a sidebar dropdown) with provider cards showing name, base_url, api_key (partial), model tags, and edit/delete buttons. A modal form handles add/edit with fields: name, base_url, api_key, models (comma-separated).
+
+**Model switching**: Clicking a model tag saves the model name to `localStorage`, used by the chat page:
+```javascript
+function selectModel(model) {
+    localStorage.setItem('chatModel', model);
+    showToast('已切换: ' + model);
+    loadProviders();
+}
+```
+
+### Comparison: Global vs Per-User
+
+| Pattern | When | Pros | Cons |
+|---------|------|------|------|
+| Global file-backed | Single-user | Simple, no auth | No multi-user |
+| Per-user in-memory | Same device family | Each user their own keys | Lost on restart |
+| Per-user file-backed | Cross-device, persistent | Survives restarts | Requires auth |
+
 ## Pitfalls
 
 | Issue | Cause | Fix |
