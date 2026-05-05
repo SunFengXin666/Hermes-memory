@@ -318,7 +318,7 @@ function disconnectServer() {
 
 ### Trigger auto-connect on page/disk switch
 
-In `switchPage()` (or equivalent page navigation function), check if not already connected:
+In SPA mode, trigger auto-connect when switching to the disk page:
 
 ```javascript
 function switchPage(name) {
@@ -329,6 +329,14 @@ function switchPage(name) {
   // ...
 }
 ```
+
+**In multi-page mode** (separate Flask routes serving standalone HTML), trigger on `DOMContentLoaded` instead:
+
+```javascript
+document.addEventListener('DOMContentLoaded', autoConnect);
+```
+
+See `flask-chat-ui` skill's "SPA to Multi-Page Refactoring" section for the full conversion pattern.
 
 ### Save config after successful manual connect
 

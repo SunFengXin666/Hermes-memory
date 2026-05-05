@@ -218,6 +218,113 @@ On Xiaomi/Android browsers, `env(safe-area-inset-bottom)` often returns 0. Use a
 **3. Top bar (hidden on desktop, shown on mobile):**
 Contains hamburger menu (left), title (center), new chat button (right, `margin-left:auto`).
 
+## SPA to Multi-Page Refactoring
+
+As your Flask web app grows beyond just a chat interface (adding file management, memories, settings, etc.), you may outgrow the SPA approach where a single `index.html` uses JS `onshow`/`onhide` to switch between pages.
+
+### When to Split
+
+- User wants **separate URLs** for different features (`/disk`, `/memories`, `/`)
+- **Browser back button** doesn't work in SPA mode
+- Features have **conflicting JS** (e.g., chat JS polluting disk page JS namespace)
+- Page-specific bugs are hard to isolate
+
+### How to Convert
+
+**Before (SPA):** One route, one mega HTML with JS page switching:
+
+```python
+@app.route('/')
+def index():
+    return send_from_directory('.', 'index.html')
+```
+
+Sidebar navigation used `onclick`:
+
+```html
+<button class="nav-btn" onclick="switchPage('disk')">云盘</button>
+```
+
+**After (Multi-Page):** Separate routes per page:
+
+```python
+from flask import send_from_directory
+
+@app.route('/')
+def chat_page():
+    return send_from_directory('templates', 'chat.html')
+
+@app.route('/disk')
+def disk_page():
+    return send_from_directory('templates', 'disk.html')
+
+@app.route('/memories')
+def memories_page():
+    return send_from_directory('templates', 'memories.html')
+```
+
+Sidebar uses `<a href>` for real navigation:
+
+```html
+<a href="/" class="nav-btn">新对话</a>
+<a href="/memories" class="nav-btn">每日记忆</a>
+<a href="/disk" class="nav-btn">云盘</a>
+```
+
+### Key Decisions When Splitting
+
+**1. Duplicate sidebar HTML (don't over-engineer)**
+
+Each page's HTML includes its own copy of the sidebar. This is intentional — for a simple app, Jinja2 template inheritance adds complexity without value. The sidebar CSS is identical across pages (same `:root` variables, same nav styles).
+
+**2. Each page has its own `<script>` block**
+
+Only include the JS needed for that page. Chat page gets chat/message/history JS. Disk page gets SFTP connection/file browser JS. This prevents:
+- Variable name conflicts (e.g., `diskConnId` vs `messages`)
+- Unnecessary code loading
+- Accidental cross-page state sharing via closures
+
+**3. Shared state moves to localStorage**
+
+In the SPA, all JS variables were in-memory and shared across pages. After splitting, each page has its own JS context. Shared state (like saved server config for auto-connect) must use `localStorage`:
+
+```javascript
+// === Disk page ===
+// Save on connect:
+localStorage.setItem('diskServer', JSON.stringify({host, port, username, password, root_path}));
+
+// Auto-connect on page load:
+function autoConnect() {
+  const saved = localStorage.getItem('diskServer');
+  if (!saved) return;
+  const cfg = JSON.parse(saved);
+  fetch('/api/disk/connect', {method:'POST', body: JSON.stringify(cfg)})
+    .then(r=>r.json()).then(data => { /* ... */ });
+}
+document.addEventListener('DOMContentLoaded', autoConnect);
+```
+
+**4. Keep the same CSS `:root` variables across pages**
+
+All pages share the same theme variables (`--accent: #007aff`, `--bg: #f5f5f7`, etc.). This ensures a consistent look even though the HTML files are separate. Copy the entire `<style>` block to each page.
+
+**5. Separate Flask routes, same Flask app**
+
+All routes live in the same `app.py`. No need for Flask Blueprints unless the app grows significantly (>10 routes). Keep it simple:
+- Chat route at `/`
+- Disk route at `/disk`
+- Memories route at `/memories`
+- All API endpoints at `/api/...` (shared across pages)
+
+### Pitfalls
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Sidebar active state lost on page load | JS can't set `active` class on `<a>` since page reloads | Hardcode `active` class on the current page's link: `<a href="/disk" class="nav-btn active">` |
+| In-memory chat history lost navigating away and back | Messages are only in JS memory, not persisted | Always `addCurrentToHistory()` on page unload or save every message to `localStorage` immediately |
+| Duplicated CSS drifts across pages | Editing one page's CSS but not others | Keep CSS identical across pages; start each page with a copy from the source of truth |
+| `send_from_directory` doesn't find templates | Path relative to `app.py` | Make sure templates directory exists and path is correct: `send_from_directory('templates', 'chat.html')` |
+
 ## Pitfalls
 
 | Issue | Cause | Fix |
