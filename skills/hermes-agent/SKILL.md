@@ -885,6 +885,126 @@ hermes config set auxiliary.vision.model <model_name>
 
 ---
 
+## Writing Custom Plugins (on_session_end Hooks)
+
+Hermes plugins live in `~/.hermes/hermes-agent/plugins/<name>/` and are auto-discovered when listed in `config.yaml` under `plugins.enabled`.
+
+### Minimum Plugin Structure
+
+```
+~/.hermes/hermes-agent/plugins/my-plugin/
+├── plugin.yaml        # Metadata + hook declarations
+└── __init__.py        # Python code with register(ctx) entry point
+```
+
+### plugin.yaml
+
+```yaml
+name: my-plugin
+version: 1.0.0
+description: "What this plugin does."
+author: "user"
+hooks:
+  - on_session_end       # Declares which hooks this plugin binds to
+```
+
+### __init__.py (on_session_end pattern)
+
+```python
+\"\"\"My plugin — described here.\"\"\"
+from __future__ import annotations
+import logging
+import json, os
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+def _on_session_end(
+    session_id: str = "",
+    completed: bool = True,
+    interrupted: bool = False,
+    **_: Any,
+) -> None:
+    \"\"\"Runs when a Hermes session ends (QQ, CLI, cron, etc.).\"\"\"
+    if not session_id:
+        return
+
+    # Read session JSON for full conversation data
+    path = os.path.expanduser(f\"~/.hermes/sessions/session_{session_id}.json\")
+    if not os.path.exists(path):
+        logger.debug(\"my-plugin: session file not found — %s\", path)
+        return
+
+    with open(path, \"r\", encoding=\"utf-8\") as f:
+        session = json.load(f)
+
+    messages = session.get(\"messages\", [])
+    platform = session.get(\"platform\", \"unknown\")   # qqbot, webui, cli, cron, etc.
+    model = session.get(\"model\", \"unknown\")
+    session_start = session.get(\"session_start\", \"\")
+
+    # messages is a list of {role, content} dicts
+    # role can be: user, assistant, system, tool
+
+def register(ctx) -> None:
+    ctx.register_hook(\"on_session_end\", _on_session_end)
+```
+
+### Enable in Config
+
+```yaml
+plugins:
+  enabled:
+  - my-plugin
+  - github-sync          # Bundled example
+  disabled: []
+```
+
+### Callback Signature
+
+```python
+def my_handler(
+    session_id: str,       # e.g. "20260505_225927_3b09be"
+    completed: bool = True,  # Did session complete normally?
+    interrupted: bool = False, # Was it interrupted?
+    **_: Any,              # Future-proof catch-all
+) -> None:
+```
+
+### Session JSON Fields Available
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | str | Unique session ID |
+| `model` | str | Model used (e.g. `deepseek-v4-flash`) |
+| `base_url` | str | Provider base URL |
+| `platform` | str | Source: `qqbot`, `webui`, `cli`, `cron`, `api`, `telegram`, `discord` |
+| `session_start` | str | ISO datetime |
+| `last_updated` | str | ISO datetime |
+| `system_prompt` | str | Full system prompt |
+| `messages` | list[dict] | `[{role, content}, ...]` — user + assistant exchanges |
+| `message_count` | int | Total messages |
+| `tools` | list[dict] | Tool definitions used in session |
+
+### Common Pitfalls
+
+- **Plugin not firing**: Check `plugins.enabled` list in `config.yaml`. Add the plugin name.
+- **Need restart**: Plugin is loaded on Hermes Agent startup. Use `/new` or restart the gateway.
+- **Session not recorded**: `config.yaml` `record_sessions: false` prevents session files from being written. Set to `true` (default) to enable.
+- **Don't block**: Keep `on_session_end` handlers fast. Heavy work (cURL, git push) should be in subprocess or background thread.
+- **See bundled example**: `~/hermes/hermes-agent/plugins/github-sync/` — working on_session_end plugin that runs git push on every session end.
+- **Don't repeat what github-sync does**: If creating a plugin that also syncs files to a remote, add it as an extension to github-sync rather than re-inventing the sync mechanism.
+
+### When to Use This vs Other Mechanisms
+
+| Need | Solution |
+|------|----------|
+| Save conversation to file | on_session_end plugin |
+| Push to GitHub after every session | github-sync plugin (bundled) |
+| Run on a schedule | `hermes cron` or cronjob tool |
+| React to webhook POST | `hermes webhook subscribe` |
+| Daily summary/report | cron job + on_session_end for raw data |
+
 ## Contributor Quick Reference
 
 For occasional contributors and PR authors. Full developer docs: https://hermes-agent.nousresearch.com/docs/developer-guide/
