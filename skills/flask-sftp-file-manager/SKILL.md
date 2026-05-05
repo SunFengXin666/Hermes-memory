@@ -186,6 +186,86 @@ async function diskDelete(name) {
 }
 ```
 
+## Root Path Locking (Chroot-Like Mode)
+
+When building a shared or quota-based SFTP file browser, you may want to **lock users into a specific directory** so they cannot navigate above it. This is like `chroot` for SFTP.
+
+### Backend: Accept `root_path` on Connect
+
+```python
+@app.route('/api/disk/connect', methods=['POST'])
+def disk_connect():
+    data = request.json
+    ...
+    root_path = data.get('root_path', '').strip()
+    if root_path:
+        root_path = '/' + root_path.lstrip('/').rstrip('/')  # normalize
+
+    # Create directory tree if not exists (like mkdir -p)
+    if root_path:
+        parts = root_path.strip('/').split('/')
+        cur = ''
+        for p in parts:
+            cur += '/' + p
+            try: sftp.stat(cur)
+            except: sftp.mkdir(cur)
+
+    # Store root_path in connection info
+    sftp_connections[conn_id] = {
+        'client': client, 'sftp': sftp,
+        'info': {**data, 'root_path': root_path}
+    }
+    return jsonify({'ok': True, 'conn_id': conn_id, 'root_path': root_path})
+```
+
+### Frontend: Enforce Lock on Navigation
+
+```javascript
+let diskRoot = null;  // set after connect if root_path provided
+
+async function connectServer() {
+    ...
+    const data = await resp.json();
+    diskRoot = data.root_path || null;
+    // Show 🔒 icon when locked
+    const label = diskRoot ? '🔒 ' + host : '☁️ ' + host;
+    document.getElementById('disk-server-name').textContent = label;
+    // Start at root_path
+    diskPath = diskRoot || '/';
+    diskList(diskPath);
+}
+```
+
+**Back button (上级) enforcement:**
+
+```javascript
+function diskGoBack() {
+    if (!diskPath || diskPath === '/') return;
+    if (diskRoot && diskPath === diskRoot) {
+        showToast('🔒 已锁定在根路径');
+        return;
+    }
+    const parent = diskPath.substring(0, diskPath.lastIndexOf('/')) || '/';
+    if (diskRoot && !parent.startsWith(diskRoot)) {
+        showToast('🔒 已锁定在根路径');
+        return;
+    }
+    diskList(parent);
+}
+```
+
+Use `startsWith(diskRoot)` for the boundary check rather than comparing string lengths — this handles edge cases where a sibling path happens to be the same length as the root.
+
+**UI indicator**: Change the server name icon from ☁️ to 🔒 when root_path is set.
+
+### When to lock vs not
+
+| Scenario | root_path | Behavior |
+|----------|-----------|----------|
+| Admin managing entire server | empty / not set | Free mode — navigate anywhere from `/` |
+| User with quota/workspace directory | `/home/user/workspace` | Locked mode — can't go above this dir |
+| Project-specific sandbox | `/opt/projects/123` | Locked — user only sees their project files |
+
 ## Disk Usage Endpoint
 
 Three approaches, choose based on your use case:
