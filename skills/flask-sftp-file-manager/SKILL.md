@@ -399,7 +399,37 @@ function escapeHtml(str) {
 | SVGs with embedded scripts | XSS risk | Filter `<script>` tags from SVG content or render as <img>, not inline |
 | Preview button shows for unsupported file types | Extension not in any list | Add fallback — try reading as text, if that fails, show "不支持预览" |
 
-## Pitfalls (General)
+## Debugging Silent Frontend Failures
+
+A common issue in mobile SPA Flask apps: buttons/actions do **nothing** when tapped — no error, no visible response. This is almost always a JavaScript error being silently swallowed by the mobile browser.
+
+### Debugging Approach (Using Hermes Browser Tool)
+
+1. **Open the page via `browser_navigate`**
+2. **Click the failing button** (e.g., connect, upload, delete)
+3. **Check `browser_console`** for JS errors — even empty `"exception"` entries are meaningful
+4. **Test the API directly** via `browser_console` with an async expression:
+   ```javascript
+   try { (async()=>{const r=await fetch('/api/disk/connect',{method:'POST',...}); const d=await r.json(); console.log('OK',d) })() } catch(e) { console.error('ERR',e.message) }
+   ```
+   This isolates whether the bug is API-side (auth, timeout) vs frontend-side (JS undefined function, DOM error)
+5. **Check function name mismatches** — the most common pattern: the HTML `onclick` handler calls `someFunction()` but the `<script>` defines it as `someOtherName()`. Common examples:
+   - `toast()` vs `showToast()` — toast helper functions
+   - `closeModal()` vs `hideModal()` — modal helpers
+   - `diskRefresh()` vs `refreshDisk()` — etc.
+6. **Search the HTML** for the function name to verify it exists:
+   ```bash
+   grep -n 'function toast\|function showToast' /root/webui/index.html
+   ```
+
+### Common Patterns
+
+| Symptom | Likely Cause | Fix |
+|---------|-------------|-----|
+| Button click does nothing, no toast shown | `toast()` calls undefined function | Rename calls to match definition |
+| Modal opens but confirm button does nothing | `onclick` handler references wrong function name | Check function name in HTML vs script |
+| API call works from console but button fails | Frontend JS error prevents fetch from executing | Check console for any exception |
+| Works on desktop Chrome but not on mobile | Xiaomi/Android browser may have stricter CSP or different error handling | Test via Hermes browser tool (uses real Chromium) |
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
