@@ -8,7 +8,7 @@ GitHub auto-sync on_session_end (plugin github-sync): /root/hermes-memory-backup
 §
 Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/android-sdk (platform 34), Gradle 8.5 /opt/gradle/gradle-8.5. IM+云盘 project at /root/im-app/ (Flask), Android project at /root/im-app-android/. APK at /root/im-app.apk.
 §
-IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防断开。Android WebView文件选择必须用`<label>`包裹`<input type=file>`——JS触发`.click()`/透明覆盖层均无效。Vision用MiMo `mimo-v2-omni` @ token-plan-cn.xiaomimimo.com/v1。Flask端口8080。Hermes API代理(localhost:8642)模型名必须用`hermes-agent`。
+IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防断开。Android WebView文件选择必须用`<label>`包裹`<input type=file>`——JS触发`.click()`/透明覆盖层均无效。Vision用MiMo `mimo-v2-omni` @ token-plan-cn.xiaomimimo.com/v1, key: tp-cr3x7h17d0ss3kupmhid5jhcngsdk4gg75k3yve2jnby218r。Flask端口8080。Hermes API代理(localhost:8642)模型名必须用`hermes-agent`。
 §
 Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes accumulate over days (~150MB each). First step when lag reported: `pkill -f chromium-browser`. No swap configured.
 §
