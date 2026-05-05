@@ -6,7 +6,7 @@ author: Hermes Agent
 license: MIT
 metadata:
   hermes:
-    tags: [cron, journal, reflection, daily-summary, session-search, productivity, automation]
+    tags: [cron, journal, reflection, daily-summary, session-search, productivity, automation, plugin, on_session_end, conversation-history]
     related_skills: [github-auto-sync, webhook-subscriptions]
 ---
 
@@ -24,10 +24,33 @@ The user wants some variant of:
 - "Create a daily memory / reflection system"
 - "每晚把今天干了什么整理成笔记"
 - "自动记录每天学到的新知识"
+- "每次的对话都保存成为历史" (save every conversation as raw history)
+- "记忆模块弄一下" (set up a memory module)
+- "刷新后对话别丢了" (conversation history persists across page refresh)
 
 This is distinct from:
 - **`github-auto-sync`** — that skill covers *how* to sync files to GitHub (the git mechanics). This skill covers the *full end-to-end workflow*: what to summarize, the file structure, the cron prompt design, the web viewer, and the notification chain.
 - **`webhook-subscriptions`** — event-driven (external POST → agent run). This skill is time-driven (cron → agent run).
+
+## Architecture Options
+
+Three approaches, from simplest to most comprehensive:
+
+### Option A — Cron-based summarization (pull model)
+Cron job at 23:59 uses `session_search` to fetch today's conversations, summarizes into structured markdown. Best for daily summaries. See "Setup Steps" below.
+
+### Option B — Open WebUI Integration
+Inject daily memories sidebar into Open WebUI via FastAPI router + JS loader. See "Option B" section.
+
+### Option C — on_session_end Plugin (push model) ⬅️ NEW
+Hermes plugin hooks `on_session_end`, reads session JSON, appends raw conversation to daily markdown file immediately after each session ends. Best for:
+- Every conversation saved as history (not just summaries)
+- Real-time capture (no need to wait for cron)
+- Multi-platform (QQ, WebUI, CLI, Telegram all captured automatically)
+- Complementary with Option A — run cron for summaries + plugin for raw history
+
+### Option D — WebUI save endpoint
+Flask app at `/api/save-conversation` saves each exchange on AI response. Frontend calls it via `fetch()` after `appendMessage`. Covers WebUI conversations even if Hermes session isn't tracked.
 ## Architecture (Two Options)
 
 ### Option A — Standalone HTTP Server (simpler, works with any env)
@@ -593,6 +616,171 @@ docker restart open-webui
 | Setup complexity | Low | Medium (needs container surgery) |
 | Survives `docker rm` | Yes (separate container) | No (re-run setup script) |
 | Container startup order | Independent | Must wait for open-webui |
+
+### Option C — Real-time Save via on_session_end Plugin
+
+A Hermes plugin that fires on every session end (QQ, CLI, cron, WebUI API) and saves the raw conversation to `~/daily-memories/YYYY-MM-DD.md`.
+
+#### Plugin Files
+
+**`~/.hermes/hermes-agent/plugins/daily-memory/plugin.yaml`:**
+```yaml
+name: daily-memory
+version: 1.0.0
+description: "Save every conversation as daily memory on session end."
+author: "user"
+hooks:
+  - on_session_end
+```
+
+**`~/.hermes/hermes-agent/plugins/daily-memory/__init__.py`:**
+```python
+\"\"\"daily-memory plugin — save every conversation to ~/daily-memories/ on session end.\"\"\"
+from __future__ import annotations
+import json, logging, os
+from datetime import datetime
+from typing import Any
+
+logger = logging.getLogger(__name__)
+MEMORIES_DIR = os.path.expanduser(\"~/daily-memories\")
+SESSIONS_DIR = os.path.expanduser(\"~/.hermes/sessions\")
+
+PLATFORM_LABELS = {\"qqbot\": \"💬 QQ\", \"webui\": \"🌐 WebUI\", \"cli\": \"🖥️ CLI\", \"cron\": \"⏰ Cron\", \"api\": \"🔌 API\"}
+PLATFORM_ICONS = {\"qqbot\": \"💬\", \"webui\": \"🌐\", \"cli\": \"🖥️\", \"cron\": \"⏰\", \"api\": \"🔌\"}
+
+def _on_session_end(session_id: str = \"\", completed: bool = True, interrupted: bool = False, **_: Any) -> None:
+    if not session_id: return
+    path = os.path.join(SESSIONS_DIR, f\"session_{session_id}.json\")
+    if not os.path.exists(path): return
+    try:
+        with open(path, \"r\", encoding=\"utf-8\") as f: session = json.load(f)
+    except: return
+    messages = session.get(\"messages\", [])
+    user_msgs = [m for m in messages if m.get(\"role\") == \"user\"]
+    if len(user_msgs) < 1: return
+    platform = session.get(\"platform\", \"unknown\")
+    model = session.get(\"model\", \"unknown\")
+    session_start = session.get(\"session_start\", \"\")
+    try:
+        dt = datetime.fromisoformat(session_start)
+        date_str, time_str = dt.strftime(\"%Y-%m-%d\"), dt.strftime(\"%H:%M\")
+    except:
+        now = datetime.now()
+        date_str, time_str = now.strftime(\"%Y-%m-%d\"), now.strftime(\"%H:%M\")
+    icon = PLATFORM_ICONS.get(platform, \"💬\")
+    label = PLATFORM_LABELS.get(platform, platform)
+    conv = []
+    for m in messages:
+        r, c = m.get(\"role\", \"\"), m.get(\"content\", \"\")
+        if r == \"system\": continue
+        if r == \"user\":
+            text = c[:200].replace(\"\\n\", \" \").strip()
+            conv.append(f\"> **我**: {text}\")
+            if len(c) > 200: conv.append(\">   *(消息过长，已截断)*\")
+        elif r == \"assistant\":
+            text = c[:300].replace(\"\\n\", \" \").strip()
+            conv.append(f\"> **AI**: {text}\")
+            if len(c) > 300: conv.append(\">   *(回复过长，已截断)*\")
+    if len(conv) < 2: return
+    entry = f\"\"\"---
+### {icon} {time_str} — {label} · {model}
+
+{\"\\n\".join(conv)}
+
+*{len(messages)} 条消息*
+\"\"\"
+    os.makedirs(MEMORIES_DIR, exist_ok=True)
+    daily_path = os.path.join(MEMORIES_DIR, f\"{date_str}.md\")
+    try:
+        with open(daily_path, \"a\", encoding=\"utf-8\") as f: f.write(entry)
+        logger.info(\"daily-memory: saved %d messages to %s\", len(messages), daily_path)
+    except: pass
+
+def register(ctx) -> None:
+    ctx.register_hook(\"on_session_end\", _on_session_end)
+```
+
+#### Enable in Config
+
+Add to `~/.hermes/config.yaml`:
+```yaml
+plugins:
+  enabled:
+  - daily-memory
+  - github-sync
+  disabled: []
+```
+
+#### Verification
+
+Restart Hermes (or gateway) for plugin to load. Sessions are saved automatically on end:
+```bash
+# Check saved entries
+tail ~/daily-memories/$(date +%Y-%m-%d).md
+```
+
+#### Notes
+
+- Plugin requires Hermes restart (or `/new`) to load
+- Session recording must be enabled (`record_sessions: true` in config.yaml — default)
+- The session JSON is read for full messages. Each conversation gets one entry per session
+- Messages are truncated (200 chars user, 300 chars assistant) to keep daily files manageable
+- Works with QQ bot, Telegram, CLI, WebUI API sessions — any platform that creates a Hermes session
+
+### Option D — WebUI Save Endpoint (realtime per-exchange)
+
+For the Flask-based WebUI, add a `POST /api/save-conversation` endpoint that saves the current conversation after each assistant response:
+
+**Backend (`app.py` addition):**
+```python
+@app.route('/api/save-conversation', methods=['POST'])
+def save_conversation():
+    data = request.json
+    messages = data.get('messages', [])
+    if not messages: return jsonify({'ok': False})
+    now = datetime.now()
+    date_str = now.strftime('%Y-%m-%d')
+    time_str = now.strftime('%H:%M:%S')
+    user_msgs = [m for m in messages if m.get('role') == 'user']
+    last_user = user_msgs[-1]['content'][:150] if user_msgs else ''
+    assistant_msgs = [m for m in messages if m.get('role') == 'assistant']
+    last_assistant = assistant_msgs[-1]['content'][:300] if assistant_msgs else ''
+    entry = f\"\"\"---
+### 🌐 {time_str} — WebUI · hermes-agent
+
+> **我**: {last_user.replace(chr(10), ' ').strip()}
+> **AI**: {last_assistant.replace(chr(10), ' ').strip()}
+
+*{len(messages)} 条消息*
+\"\"\"
+    Path(MEMORIES_DIR).mkdir(parents=True, exist_ok=True)
+    daily_path = Path(MEMORIES_DIR) / f'{date_str}.md'
+    with open(daily_path, 'a', encoding='utf-8') as f: f.write(entry)
+    return jsonify({'ok': True, 'date': date_str})
+```
+
+**Frontend (`index.html` addition — after `appendMessage`):**
+```javascript
+// Auto-save conversation to daily memory
+fetch('/api/save-conversation', {
+  method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({messages})
+}).catch(()=>{});
+```
+
+This is complementary to Option C — Option C captures all platforms (QQ, CLI) but only on session end. Option D captures WebUI exchanges immediately, even mid-session.
+
+#### Comparison of Approaches
+
+| Aspect | Option A (Cron) | Option C (Plugin) | Option D (WebUI Save) |
+|---|---|---|---|
+| Trigger | Scheduled (23:59) | Session end | Each AI response |
+| Content | Summarized insight | Raw conversation | Raw conversation |
+| Platforms | All (via session_search) | All (QQ, CLI, cron, API) | WebUI only |
+| Real-time | No (once daily) | Yes (session end) | Yes (immediate) |
+| Setup complexity | Medium (cron prompt) | Low (plugin + config) | Low (API + JS) |
+| Dependencies | Hermes cron | Session files on disk | Flask + WebUI |
 
 ### Pitfalls (Open WebUI-specific)
 
