@@ -1,4 +1,5 @@
-Mihomo proxy at /etc/mihomo/ (systemd mihomo.service). Mixed proxy 127.0.0.1:7890, SOCKS 7891, API 9090. Use export https_proxy=http://127.0.0.1:7890 for foreign downloads (curl/wget/git). All foreign traffic goes through proxy; domestic sources (aliyun, tencent, pypi mirrors) direct. Subscription from yfssce.net. Geoip/geosite via ghproxy.net mirror.
+Mihomo proxy (systemd) 127.0.0.1:7890 mixed, SOCKS 7891, API 9090. Use export https_proxy=http://127.0.0.1:7890 for foreign downloads. Subscription yfssce.net. Geoip/geosite via ghproxy.net.
+Tailscale v1.96.4 installed. Server IP 100.107.11.26, WSL (qiafeng) 100.124.41.87, same tailnet under flechasdraftsye168@gmail.com.
 §
 NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSocket). Also WebSocket at 6099 port (with token). Send-image helper scripts at /opt/napcat/send_image.js (uses NCWebsocket library, target QQ 3240171077, file path /root/qrcode.png). Also /opt/napcat/send.js (native ws). To send QR/image to QQ via NapCat: cp screenshot /root/qrcode.png && cd /opt/napcat && node send_image.js. NapCat Docker container name: napcatf.
 §
