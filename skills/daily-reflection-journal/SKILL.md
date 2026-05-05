@@ -154,12 +154,11 @@ The cron prompt must be **self-contained** — it can't ask the user for input. 
    (sync.sh must include `daily-memories/` in its `git add` and copy steps)
 
 6. **Send notification:**
+   Use a Node.js WebSocket script (NapCat port 3001 is WebSocket, not HTTP):
+   ```bash
+   cd /opt/napcat && node send_qq_text.js "📅 每日记忆 - $(TZ=Asia/Shanghai date +%Y-%m-%d)\n\n✅ 已完成\n<摘要>\n\n🔍 学到\n<要点>\n\n📝 明日\n<待办>\n\n详情: http://server:4000"
    ```
-   curl -X POST -H "Content-Type: application/json" \
-     -d '{"action":"send_private_msg","params":{"user_id":TARGET_QQ,"message":"📅 今日记忆已生成\nhttp://server:8080"}}' \
-     http://127.0.0.1:3001/
-   ```
-   (NapCat QQ Bot WebSocket HTTP API — port 3001, no token)
+   See the "QQ Notification via NapCat" section below for the script.
 
 ### 6. Integrate with GitHub backup
 
