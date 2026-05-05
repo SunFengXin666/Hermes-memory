@@ -14,4 +14,4 @@ IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防
 §
 Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes accumulate over days (~150MB each). First step when lag reported: `pkill -f chromium-browser`. No swap configured.
 §
-每日记忆系统：每晚23:59自动总结当日会话，保存~/daily-memories/YYYY-MM-DD.md，推GitHub发QQ通知。QQ发送脚本/opt/napcat/send_qq_text.js。已集成到Open WebUI侧边栏(📖每日记忆按钮)——loader.js注入+自定义FastAPI路由。容器重建需跑/root/openwebui-custom/setup-daily-memories.sh。
+每日记忆: cron 23:59→~/daily-memories/→推GitHub+QQ通知。Open WebUI侧边栏📖按钮(插在Notes后面,桌面+手机通用),路由器在daily_memories.py,loader.js注入。恢复:/root/openwebui-custom/setup-daily-memories.sh
