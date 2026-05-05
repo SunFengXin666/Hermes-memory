@@ -487,8 +487,8 @@ print('OK')
 #### 4. Inject frontend sidebar entry (loader.js)
 
 Create `loader.js` on the host and copy it in. This JS must be wrapped in an IIFE so it doesn't pollute the global scope. It:
-- Polls the DOM until the sidebar `<nav>` element appears (Svelte rendering delay)
-- Appends a `📖 每日记忆` button to the nav
+- Polls the DOM until the sidebar items container `div.-mt-\[0\.5px\]` appears (Svelte rendering delay)
+- Appends a `📖` button styled to match the other sidebar items (`<a>` for 新对话, `<button>` for 搜索, etc.)
 - On click, creates a slide-out `<div>` panel (position: fixed, right: 0, width: 480px, z-index: 9999)
 - The panel fetches from `/api/daily-memories` and renders a date list
 - Clicking a date fetches `/api/daily-memories/{date}` and renders MD as HTML (basic regex-based markdown, no library needed)
@@ -504,24 +504,44 @@ Template for `loader.js`:
 
 ```javascript
 (function() {
-  let currentData = null;
-
-  function init() {
+  function inject() {
     if (document.getElementById('daily-memories-btn')) return;
-    function tryAdd() {
-      const nav = document.querySelector('[class*="sidebar"] nav') || document.querySelector('nav');
-      if (!nav || document.getElementById('daily-memories-btn')) return false;
-      const btn = document.createElement('button');
-      btn.id = 'daily-memories-btn';
-      btn.textContent = '📖 每日记忆';
-      btn.style.cssText = `display:flex;align-items:center;gap:8px;padding:8px 12px;width:100%;border:none;background:transparent;color:var(--color-text,#ccc);cursor:pointer;font-size:14px;border-radius:8px;`;
-      btn.onmouseenter = () => btn.style.background = 'var(--color-hover,rgba(255,255,255,0.1))';
-      btn.onmouseleave = () => btn.style.background = 'transparent';
-      btn.onclick = togglePanel;
-      nav.appendChild(btn);
-      return true;
+
+    // Inject into sidebar items container (desktop + mobile drawer)
+    const container = document.querySelector('.-mt-\\[0\\.5px\\]');
+    if (!container) return false;
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `
+      <div class="flex">
+        <button id="daily-memories-btn"
+          class="cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
+          draggable="false" aria-label="Daily Memories"
+          style="width:100%;padding:0;border:none;background:transparent;color:inherit;">
+          <div class="self-center flex items-center justify-center size-9">📖</div>
+          <span class="sidebar-item-label" style="
+            display:none;align-self:center;font-size:14px;margin-left:8px;white-space:nowrap;
+          ">每日记忆</span>
+        </button>
+      </div>`;
+
+    const btn = wrapper.querySelector('button');
+    btn.onclick = function(e) { e.stopPropagation(); togglePanel(); };
+
+    // Track sidebar collapsed/expanded state
+    function updateLabel() {
+      const label = wrapper.querySelector('.sidebar-item-label');
+      if (!label) return;
+      const sidebar = container.closest('[class*="pt-["]');
+      label.style.display = (sidebar && sidebar.offsetWidth > 60) ? 'inline' : 'none';
     }
-    if (!tryAdd()) setTimeout(tryAdd, 1500);
+    setTimeout(updateLabel, 500);
+    const ro = new ResizeObserver(updateLabel);
+    const sidebarEl = container.closest('[class*="pt-["]');
+    if (sidebarEl) ro.observe(sidebarEl);
+
+    container.appendChild(wrapper.firstElementChild);
+    return true;
   }
 
   function togglePanel() { /* create slide-out panel, call loadList() */ }
@@ -529,8 +549,8 @@ Template for `loader.js`:
   async function loadContent(date) { /* GET /api/daily-memories/{date}, render MD */ }
 
   // Start on DOMContentLoaded, keep retrying for Svelte render delay
-  document.addEventListener('DOMContentLoaded', init);
-  setInterval(() => { if (!document.getElementById('daily-memories-btn')) init(); }, 1000);
+  document.addEventListener('DOMContentLoaded', inject);
+  setInterval(() => { if (!document.getElementById('daily-memories-btn')) inject(); }, 1000);
 })();
 ```
 
@@ -551,6 +571,8 @@ curl -s http://localhost:3000/api/daily-memories/2026-05-05 | python3 -m json.to
 ```
 
 ### Recovery Script
+
+Keep `/root/openwebui-custom/setup-daily-memories.sh` — it copies the router, patches main.py, injects loader.js, restarts the container, and verifies the API.
 
 If the container is ever recreated (docker rm), keep a setup script ready:
 
@@ -587,7 +609,9 @@ docker restart open-webui
 
 - **main.py patches are fragile**: Open WebUI updates may change the import block layout. If a container upgrade fails, re-examine the exact lines before vs after `calendar,` and adjust.
 - **loader.js IIFE scoping**: All functions and event handlers must live inside the IIFE closure. Do NOT use inline `onclick` attributes in innerHTML (those require global functions). Use `.onclick = fn` after inserting elements, or use `document.getElementById(...).onclick = fn`.
-- **Svelte rendering delay**: The sidebar `<nav>` element may not exist at DOMContentLoaded. Use a polling loop (setInterval up to 30s, 1s interval) to retry button injection.
+- The sidebar `<nav>` element may not exist at DOMContentLoaded (it's inside the Svelte app). The sidebar items container is `div.-mt-\[0\.5px\]` — **this is the injection target** because it exists in both desktop and mobile layouts.
+- On mobile, Open WebUI uses a sliding drawer sidebar. The items container `.-mt-\[0\.5px\]` lives inside this drawer too, so injecting there makes the button appear on both desktop and mobile. Do NOT inject into `<nav>` — that's only the top toolbar on desktop and is invisible on mobile.
+- **Style the button to match existing sidebar items**: Use the same class structure `cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group` that the other nav items (新对话, 搜索, 笔记, Workspace) use. This ensures consistent appearance in both collapsed (icon-only) and expanded (icon+label) sidebar states.
 - **`loader.js` is loaded before the SPA mounts**: The script runs, sees no nav, sets up the polling interval, and injects the button once the Svelte app renders the nav. The polling must continue until successful.
 - **Volume mount is read-only (`:ro`)**: The memories are generated by the cron job on the host; the container only reads them.
 - **Theme consistency**: Open WebUI stores theme in `localStorage.theme` (values: 'dark', 'light', 'system', 'oled-dark', 'her'). CSS variables like `--color-bg`, `--color-text` are set by the SPA. The injected panel should use these variables for seamless theme matching.
