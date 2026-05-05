@@ -360,6 +360,42 @@ document.getElementById('disk-connect-btn').textContent = '连接';
 document.getElementById('disk-connect-btn').onclick = showServerModal;
 ```
 
+### Pre-Filled Connection Form (Single-Server Deployments)
+
+For single-server deployments where the user always connects to the same host, **pre-fill** the host/port/username fields so the user only needs to enter the password:
+
+```html
+<input type="text" id="srv-host" value="81.70.229.222">
+<input type="number" id="srv-port" value="22">
+<input type="text" id="srv-user" value="ubuntu">
+<input type="password" id="srv-pass" placeholder="密码">
+```
+
+**Remove the root_path field from the modal entirely** — it's not user-configurable. Instead, hardcode the default root_path in `connectServer()`:
+
+```javascript
+async function connectServer() {
+  // ...
+  // Use saved root_path if available, otherwise use default
+  let rootPath = '/home/ubuntu/113646';
+  try {
+    const saved = JSON.parse(localStorage.getItem('diskServer') || '{}');
+    rootPath = saved.root_path || rootPath;
+  } catch(e) {}
+  // ...
+  // Save config for auto-connect (preserve root_path)
+  localStorage.setItem('diskServer', JSON.stringify({
+    host, port, username, password,
+    root_path: rootPath || ''
+  }));
+}
+```
+
+This combines with auto-connect to create a zero-friction UX:
+1. First visit → pre-filled form → type password only → click connect
+2. All subsequent visits → click 云盘 → auto-connects silently
+3. "断开" button available to switch servers
+
 ### UX Flow
 
 1. First visit → "☁️ 未连接" + "连接" button → user fills modal → connects
