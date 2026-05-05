@@ -18,6 +18,57 @@ triggers:
 
 Quick workflow for when NapCat QQ Bot (running in Docker container `napcatf`) loses connection — usually caused by memory pressure on constrained servers.
 
+## Phase 0: Identify Which QQ Bot Is Down
+
+There are **two independent QQ bot systems** on this server. When user says "QQ bot 连不上":
+
+| System | Type | Connection | How to check |
+|--------|------|-----------|-------------|
+| **NapCat** (Docker, `napcatf`) | QQ NT protocol bot using a real QQ account | `ws://127.0.0.1:3001` (OneBot API) | `docker ps --filter name=napcat` + `docker logs napcatf --tail 10` |
+| **Hermes Gateway QQ Bot** (official API) | Tencent Bot API using app_id + client_secret | `wss://api.sgroup.qq.com/websocket` | `cat /root/.hermes/logs/gateway.log \| grep QQBot \| tail -5` |
+
+**Quick check:**
+```bash
+# Check gateway logs for QQ Bot status
+grep -E "QQBot|qqbot" /root/.hermes/logs/gateway.log 2>/dev/null | tail -10
+```
+
+**Hermes Gateway QQ Bot failure symptoms:**
+```
+WebSocket error: WebSocket closed           # recurring disconnects every ~1 min
+Reconnect failed: Failed to get QQ Bot gateway URL:  # token expired
+```
+
+**Confirm token expiration:**
+```bash
+curl -s -H "Authorization: Bot {app_id}.{client_secret}" https://api.sgroup.qq.com/gateway/bot
+# HTTP 401, {"message":"Token错误","code":11243} → token expired
+```
+
+### Fix: Hermes Gateway QQ Bot Token Expiration
+
+1. Go to https://q.qq.com/ and log in (scan QR code with QQ mobile app)
+2. Navigate to app management → find bot with app_id **1903820137**
+3. Regenerate the **client_secret**
+4. Update config:
+   ```bash
+   # Edit /root/.hermes/config.yaml, replace client_secret under platforms → qq → extra
+   ```
+5. Restart Hermes Gateway:
+   ```bash
+   # Find gateway PID and restart it
+   pkill -f "hermes_cli.main gateway" && sleep 2
+   # Or via systemd if configured
+   systemctl restart hermes
+   ```
+6. Verify:
+   ```bash
+   grep "QQBot" /root/.hermes/logs/gateway.log | tail -3
+   # Should show: WebSocket connected to wss://api.sgroup.qq.com/websocket → Reconnected → Session resumed
+   ```
+
+---
+
 ## Phase 1: Check Container Status
 
 ```bash
