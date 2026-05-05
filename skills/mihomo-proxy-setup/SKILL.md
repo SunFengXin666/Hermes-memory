@@ -264,6 +264,65 @@ docker info | grep -i proxy
 
 Now `docker pull ghcr.io/...` and `docker pull ...` will work through the proxy. This is essential for running Docker-based tools behind the proxy.
 
+### Running Containers with Per-Container Proxy
+
+For containers that need to reach BOTH local services (host machine) AND external services (proxy), daemon-level proxy causes issues. Use per-container proxy instead:
+
+```bash
+# Get Docker host gateway IP (172.17.0.1 typically)
+docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'
+# → 172.17.0.1
+
+# Run with per-container proxy — CRITICAL: set NO_PROXY for health checks
+docker run -d \
+  -p 3000:8080 \
+  --add-host host.docker.internal:host-gateway \  # Linux: host.docker.internal doesn't exist without this
+  --name my-container \
+  -e HTTP_PROXY="http://172.17.0.1:7890" \
+  -e HTTPS_PROXY="http://172.17.0.1:7890" \
+  -e NO_PROXY="localhost,127.0.0.1,::1,172.17.0.1,host.docker.internal" \
+  my-image
+```
+
+**Key pitfalls:**
+
+1. **`host.docker.internal` on Linux**: Linux Docker does NOT have a built-in `host.docker.internal` DNS entry. Always add `--add-host host.docker.internal:host-gateway` to reach host services by name inside the container.
+
+2. **Health checks fail through proxy**: If a container has HTTP_PROXY set but NO_PROXY doesn't include `localhost,127.0.0.1`, the health check command (e.g., `curl http://localhost:8080/health`) will try to go through the Mihomo proxy at 127.0.0.1:7890, which will fail. Always set `NO_PROXY=localhost,127.0.0.1,::1,172.17.0.1`.
+
+3. **Connection hanging on startup**: Containers that try to reach external services (telemetry, model downloads, update checks) during initialization will hang indefinitely if the proxy isn't configured. Set HTTP_PROXY at container level (not daemon level) to limit scope.
+
+4. **Port already in use**: Previous `docker run` attempts may leave ports bound via `docker-proxy`. Use `docker rm -f <name>` before retrying.
+
+### Deploying Open WebUI with Proxy + Local Hermes API
+
+Open WebUI is a common AI chat UI that needs to connect to a local OpenAI-compatible API (like Hermes Agent's API server on port 8642) while also reaching external resources through the proxy:
+
+```bash
+# Step 1: Pull the image (already in cache? check first)
+docker images ghcr.io/open-webui/open-webui
+
+# Step 2: Run with correct network and proxy settings
+docker run -d \
+  -p 3000:8080 \
+  --add-host host.docker.internal:host-gateway \
+  --name open-webui \
+  -e OPENAI_API_BASE_URL="http://host.docker.internal:8642/v1" \
+  -e OPENAI_API_KEY="your-api-key" \
+  -e WEBUI_SECRET_KEY="generate-a-random-key" \
+  -e ANONYMIZED_TELEMETRY=false \
+  -e HTTP_PROXY="http://172.17.0.1:7890" \
+  -e HTTPS_PROXY="http://172.17.0.1:7890" \
+  -e NO_PROXY="localhost,127.0.0.1,::1,172.17.0.1,host.docker.internal" \
+  ghcr.io/open-webui/open-webui:main
+```
+
+**Troubleshooting:**
+- Container exits with code 255: Health check failure. Check NO_PROXY setting.
+- Container shows "(health: starting)" for >30s: Uvicorn is hanging on startup. Check `docker logs` — if logs end at the banner, the app is stuck connecting to an external service. Set HTTP_PROXY.
+- "Connection reset by peer" on port: Uvicorn hasn't started listening. Use `--no-healthcheck` as a temporary test to see full logs.
+- `host.docker.internal` doesn't resolve inside container: Use `docker exec` to test with `python3 -c "import socket; print(socket.getaddrinfo('host.docker.internal', 8642))"`. If it fails, the `--add-host` flag is missing or Docker version doesn't support `host-gateway` (use `172.17.0.1` directly instead).
+
 ### Testing API Keys Through Proxy
 
 Quick test pattern for any provider:
