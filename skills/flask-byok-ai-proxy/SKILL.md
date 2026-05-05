@@ -61,7 +61,7 @@ def get_ai_config(user_id: str):
     return {'api_key': 'default-key', 'base_url': 'http://localhost:8642/v1', 'model': 'default-model', 'name': 'AI'}
 ```
 
-## Chat Completion
+### Chat Completion
 
 Use the active preset to create a per-request OpenAI client:
 
@@ -76,6 +76,28 @@ def chat_completion():
     reply = resp.choices[0].message.content
     return jsonify({'ok': True, 'reply': reply})
 ```
+
+### Normalize Provider Error Responses
+
+Provider APIs return errors in inconsistent formats — some return `{"error": {"message": "Incorrect API key"}}`, others `{"error": "Incorrect API key"}`. When the frontend receives a raw dict, it renders `[object Object]` instead of the actual error message. Always normalize before returning:
+
+```python
+try:
+    resp = requests.post(...)
+    result = resp.json()
+    if resp.status_code >= 400:
+        err_body = result.get('error', result)
+        if isinstance(err_body, dict):
+            err_msg = err_body.get('message', str(err_body))
+        else:
+            err_msg = str(err_body)
+        return jsonify({'error': err_msg, 'ok': False}), resp.status_code
+    return jsonify(result)
+except Exception as e:
+    return jsonify({'error': str(e), 'ok': False}), 500
+```
+
+This applies to any direct-to-provider chat endpoint — always normalize before returning to the frontend.
 
 Also push to SSE so any open WebView chat UI stays in sync:
 ```python
