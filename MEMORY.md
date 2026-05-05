@@ -14,4 +14,4 @@ IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防
 §
 Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes accumulate over days (~150MB each). First step when lag reported: `pkill -f chromium-browser`. No swap configured.
 §
-每日记忆系统：cron job 每晚 23:59 运行（job_id: 4b2fe18eec57），自动总结当天对话存入 ~/daily-memories/YYYY-MM-DD.md，推 GitHub 并发 QQ 通知。查看地址：http://49.232.224.90:8080。服务端 server.py 在 8080 端口，开机自启（crontab @reboot）。
+每日记忆系统：每晚23:59自动总结当日会话，保存~/daily-memories/YYYY-MM-DD.md，更新list.json，推送GitHub并发QQ通知。Nginx容器daily-memories(端口4000)提供Web查看。QQ发送脚本/opt/napcat/send_qq_text.js。Cron job_id: 3bdc54905c93。
