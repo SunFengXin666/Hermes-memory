@@ -127,6 +127,120 @@ function showToast(msg) {
 // CSS: .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:300;opacity:0;transition:opacity .3s}.toast.show{opacity:1}
 ```
 
+### Model Switching (Multi-Provider Support)
+
+For chat UIs that proxy to OpenAI-compatible APIs (Hermes Agent, local proxies with multiple backends), add a model selector so users can switch models on the fly.
+
+#### Backend: Expose Available Models
+
+The `/api/models` endpoint should return a rich list. If the upstream API only returns one model (`hermes-agent`), augment it with common alternatives as a fallback:
+
+```python
+@app.route('/api/models', methods=['GET'])
+def models():
+    try:
+        resp = requests.get(f'{LLM_API}/models', headers={'Authorization': f'Bearer {LLM_KEY}'}, timeout=10)
+        return jsonify(resp.json())
+    except:
+        # Fallback with common models when upstream API returns few
+        return jsonify({'data': [
+            {'id': 'hermes-agent'}, {'id': 'deepseek-chat'}, {'id': 'deepseek-v4-flash'},
+            {'id': 'gpt-4o'}, {'id': 'gpt-4o-mini'},
+            {'id': 'claude-sonnet-4-20250514'}, {'id': 'claude-3-5-haiku-latest'}
+        ]})
+```
+
+#### Frontend: Model Selector in Sidebar
+
+Add a `<select>` dropdown in the sidebar layout (under a "模型" section header). Populate it from `/api/models`, save selection to `localStorage`, and send with each chat request.
+
+**HTML (in sidebar, after nav buttons):**
+```html
+<div class="section">模型</div>
+<div style="padding:0 12px">
+  <select id="model-select" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:var(--surface);color:var(--text);outline:none">
+  </select>
+</div>
+```
+
+**JS: Load models, restore saved selection, persist changes:**
+```javascript
+async function loadModels() {
+  const sel = document.getElementById('model-select');
+  sel.innerHTML = '<option value="">加载中...</option>';
+  const savedModel = localStorage.getItem('chatModel') || '';
+  try {
+    const resp = await fetch('/api/models');
+    const data = await resp.json();
+    const models = data?.data || [];
+    const allModels = [
+      ...models.map(m => m.id),
+      // Additional common models the UI should always offer
+      'deepseek-v4-flash', 'deepseek-chat', 'gpt-4o', 'gpt-4o-mini',
+      'claude-sonnet-4-20250514', 'claude-3-5-haiku-latest'
+    ];
+    const unique = [...new Set(allModels)];
+    sel.innerHTML = unique.map(id =>
+      `<option value="${id}"${id === savedModel ? ' selected' : ''}>${id}</option>`
+    ).join('');
+    if (!savedModel && unique.length) {
+      sel.value = unique[0];  // First model as default
+      localStorage.setItem('chatModel', unique[0]);
+    }
+  } catch(e) {
+    sel.innerHTML = '<option value="hermes-agent">hermes-agent (默认)</option>';
+  }
+}
+
+// Save model preference on change
+document.getElementById('model-select').addEventListener('change', function() {
+  localStorage.setItem('chatModel', this.value);
+});
+
+// Call loadModels on DOMContentLoaded alongside other init
+document.addEventListener('DOMContentLoaded', () => {
+  // ... existing init ...
+  loadModels();
+});
+```
+
+**Include model in chat API request:**
+```javascript
+// In sendMessage(), include the selected model:
+const resp = await fetch('/api/chat', {
+  method:'POST', headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({
+    messages: apiMessages,
+    model: localStorage.getItem('chatModel') || 'hermes-agent'
+  })
+});
+```
+
+The backend must already accept a `model` field (the proxy passes it through to the LLM API). Example:
+```python
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    data = request.json
+    resp = requests.post(f'{LLM_API}/chat/completions', json={
+        'model': data.get('model', 'hermes-agent'),  # ← pass through
+        'messages': data.get('messages', []),
+        'stream': False
+    }, ...)
+```
+
+#### UX Flow
+
+1. Page loads → fetches `/api/models` → populates dropdown
+2. Previously selected model auto-restored from `localStorage`
+3. User selects different model → saved immediately → next chat uses it
+4. No need to save per-conversation — model preference is global
+
+#### Limitations
+
+- Model list is static per page load — doesn't refresh without page reload
+- No model validation on the backend — invalid model names return errors from the upstream API
+- The model selector is UI-only; if the upstream API doesn't support the model, the request will fail
+
 ### Image Upload / Multimodal Support
 
 Add a hidden `<input type="file">` triggered by a camera button. On selection, read as base64 and display a preview. When sending, build OpenAI multimodal content format:
