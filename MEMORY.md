@@ -13,3 +13,5 @@ Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/androi
 IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防断开。Android WebView文件选择必须用`<label>`包裹`<input type=file>`——JS触发`.click()`/透明覆盖层均无效。Vision用MiMo `mimo-v2-omni` @ token-plan-cn.xiaomimimo.com/v1。Flask端口8080。Hermes API代理(localhost:8642)模型名必须用`hermes-agent`。
 §
 Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes accumulate over days (~150MB each). First step when lag reported: `pkill -f chromium-browser`. No swap configured.
+§
+dummy_read
