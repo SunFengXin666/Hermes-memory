@@ -80,6 +80,41 @@ Or verify with ping from server to local machine:
 ping -c 3 100.yy.yy.yy
 ```
 
+### 5. (Optional) Set Up SSH Key for Bidirectional Access
+
+If you want the server to SSH into your local machine too:
+
+1. On the server, generate an SSH key if none exists:
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+```
+
+2. Copy the public key to the local machine's authorized_keys:
+```bash
+ssh-copy-id user@100.yy.yy.yy
+```
+
+Or if ssh-copy-id isn't available (e.g. SSH server not running on target yet), output the pubkey and have the user run on the target:
+```bash
+cat ~/.ssh/id_ed25519.pub
+# Then on target: echo 'the-pubkey' >> ~/.ssh/authorized_keys
+```
+
+**Pitfall**: If the target machine's `.ssh` directory doesn't exist, `ssh-copy-id` or `echo >>` will fail. Create it first: `mkdir -p ~/.ssh && chmod 700 ~/.ssh`.
+
+**Pitfall**: The target machine may not have an SSH server running (especially WSL). Install it: `sudo apt install openssh-server -y && sudo systemctl enable --now ssh`.
+
+### 6. Use Tailscale IP for Remote Management
+
+Once connected, you can use the Tailscale IP for all future SSH connections. The connection uses Tailscale's direct WireGuard tunnel — no public ports needed, no cloud firewall rules to open.
+
+For running background processes on a remote machine (e.g. starting Hermes Agent), use `tmux` or `screen`:
+```bash
+ssh user@100.xx.xx.xx
+# Then on remote:
+tmux new-session -d -s my-session './path/to/command'
+```
+
 ## Common Pitfalls
 
 - **Broken aliyun mirrors**: If dnf metadata refresh fails, the install script's `dnf config-manager --add-repo` step still works because it adds Tailscale's official repo separately. The script may succeed even when aliyun repos are broken.
