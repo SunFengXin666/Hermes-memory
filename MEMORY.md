@@ -4,9 +4,7 @@ NapCat QQ Bot (Docker) running at ws://127.0.0.1:3001 (no token needed for WebSo
 §
 番茄小说网作家后台：手机15601447368，Cookie登录(sessionid/sid_guard/sid_tt/uid_tt)，browser.cdp_url=http://127.0.0.1:9222。小说《代码深处的体温》，作者恰逢787，/root/novel/有100章大纲。
 §
-GitHub memory rule: 先拉后推。每次任务前 cd /root/hermes-memory-backup && bash sync.sh（pull+copy+push）。on_session_end 插件自动触发。Repo: SunFengXin666/Hermes-memory。
-§
-Remote server 81.70.229.222 (Tencent Cloud), Ubuntu 24.04, user: ubuntu. Has Ollama v0.22.1 (systemd, port 11434), model qwen2.5:0.5b. SSH accessible from this host.
+GitHub auto-sync on_session_end (plugin github-sync): /root/hermes-memory-backup/sync.sh. Repo: SunFengXin666/Hermes-memory.
 §
 Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/android-sdk (platform 34), Gradle 8.5 /opt/gradle/gradle-8.5. IM+云盘 project at /root/im-app/ (Flask), Android project at /root/im-app-android/. APK at /root/im-app.apk.
 §
@@ -14,4 +12,4 @@ IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防
 §
 Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes accumulate over days (~150MB each). First step when lag reported: `pkill -f chromium-browser`. No swap configured.
 §
-每日记忆: cron 23:59→~/daily-memories/→推GitHub+QQ通知。Open WebUI侧边栏📖按钮(插在Notes后面,桌面+手机通用),路由器在daily_memories.py,loader.js注入。恢复:/root/openwebui-custom/setup-daily-memories.sh
+Daily memory plugin "daily-memory" (on_session_end, ~/.hermes/hermes-agent/plugins/daily-memory/): auto-saves all conversations (QQ, CLI, cron) to ~/daily-memories/YYYY-MM-DD.md. WebUI at /root/webui/ (port 8080) has /api/save-conversation for each WebUI exchange.
