@@ -71,11 +71,11 @@ if __name__ == '__main__':
 
 ### Chat History Persistence (localStorage)
 
-Save conversations to `localStorage` on every assistant response. Restore last chat on page load.
+Save conversations to `localStorage` on every assistant response. Track the active chat separately so refresh restores the correct conversation (not just the last one in history).
 
 ```javascript
 let chatHistory = JSON.parse(localStorage.getItem('chats') || '[]');
-let currentChatId = Date.now().toString();
+let currentChatId = localStorage.getItem('activeChat') || Date.now().toString();
 
 function saveChats() {
   localStorage.setItem('chats', JSON.stringify(chatHistory));
@@ -89,6 +89,42 @@ function addCurrentToHistory() {
   else chatHistory.push(entry);
   saveChats();
 }
+
+// After save OR new chat creation, store activeChat:
+localStorage.setItem('activeChat', currentChatId);
+```
+
+**Init logic — restore active chat, not last chat:**
+```javascript
+(function init() {
+  const activeId = localStorage.getItem('activeChat');
+  const chat = activeId ? chatHistory.find(c => c.id === activeId) : null;
+  if (chat) {
+    currentChatId = chat.id;
+    messages = chat.messages;
+    renderMessages();
+  } else {
+    // First visit — create empty chat
+    messages = [];
+    currentChatId = Date.now().toString();
+    localStorage.setItem('activeChat', currentChatId);
+  }
+})();
+```
+
+**Key insight:** Without `activeChat`, refreshing after creating a new empty conversation restores the OLD saved conversation (the last entry in history), confusing users who expected the empty new chat. `activeChat` preserves exact session state across refreshes.
+
+For the new-chat flow, show a brief toast notification so the user knows the old conversation was saved:
+```javascript
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 1500);
+}
+// Toast element: <div class="toast" id="toast"></div>
+// CSS: .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:300;opacity:0;transition:opacity .3s}.toast.show{opacity:1}
 ```
 
 ### Image Upload / Multimodal Support
