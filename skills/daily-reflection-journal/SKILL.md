@@ -24,13 +24,25 @@ The user wants some variant of:
 - "Create a daily memory / reflection system"
 - "每晚把今天干了什么整理成笔记"
 - "自动记录每天学到的新知识"
-- "每次的对话都保存成为历史" (save every conversation as raw history)
-- "记忆模块弄一下" (set up a memory module)
-- "刷新后对话别丢了" (conversation history persists across page refresh)
+- "每次的对话都保存成为历史" (→ clarify: raw logs or summaries? Lead with Option A)
+- "记忆模块弄一下" (→ clarify: same distinction)
+- "刷新后对话别丢了" (→ localStorage, not daily-reflection)
 
 This is distinct from:
 - **`github-auto-sync`** — that skill covers *how* to sync files to GitHub (the git mechanics). This skill covers the *full end-to-end workflow*: what to summarize, the file structure, the cron prompt design, the web viewer, and the notification chain.
 - **`webhook-subscriptions`** — event-driven (external POST → agent run). This skill is time-driven (cron → agent run).
+
+## Critical User Preference — Clarify Before Building
+
+Users often conflate two different needs:
+1. **Raw log** — "Save every conversation word-for-word" (Options C/D below)
+2. **Daily summary** — "Summarize what I did/learned today" (Option A — recommended)
+
+**Common pattern:** A user will say "每次的对话都保存成为历史" or "记忆模块弄一下" — these SOUND like they want raw logs. But after seeing raw logs in practice, they often reverse and say "不是记录每一句话说了什么" (don't record every sentence). The raw logs clutter the daily file and provide little value.
+
+**Always lead with Option A (cron-based summary) as the default.** Only add Options C/D if the user explicitly confirms they want raw per-conversation logs after understanding the trade-off. Better yet: offer to implement Option A first, let them see it for a day, then ask if they want to add raw logging on top.
+
+Conversely, a user who asks "刷新后对话别丢了" (don't lose conversations on refresh) wants **localStorage-based chat history persistence** in a WebUI, not daily memory files at all. This is a separate concern — handle it with localStorage, not the daily-reflection system.
 
 ## Architecture Options
 
