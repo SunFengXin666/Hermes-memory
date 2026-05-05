@@ -9,7 +9,7 @@ GitHub auto-sync on_session_end (plugin github-sync): /root/hermes-memory-backup
 §
 Android APK build env on this server: JDK 17 /opt/java/, Android SDK /opt/android-sdk (platform 34), Gradle 8.5 /opt/gradle/gradle-8.5. IM+云盘 project at /root/im-app/ (Flask), Android project at /root/im-app-android/. APK at /root/im-app.apk.
 §
-Vision用MiMo: base_url=https://token-plan-cn.xiaomimimo.com/v1, models: MiMo-V2.5-Pro, MiMo-V2.5, MiMo-V2.5-Omni. Key: tp-cr3x7h17d0ss3kupmhid5jhcngsdk4gg75k3yve2jnby218r
+Vision用MiMo: base_url=https://token-plan-cn.xiaomimimo.com/v1, model IDs(小写+点号): mimo-v2.5, mimo-v2.5-pro, mimo-v2-omni, mimo-v2-pro. Key前16: tp-cr3x7h17d0ss3k
 §
 Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes accumulate over days (~150MB each). First step when lag reported: `pkill -f chromium-browser`. No swap configured.
 §
