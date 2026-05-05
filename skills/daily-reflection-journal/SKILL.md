@@ -160,7 +160,93 @@ The cron prompt must be **self-contained** — it can't ask the user for input. 
    ```
    See the "QQ Notification via NapCat" section below for the script.
 
-### 6. Integrate with GitHub backup
+### 7. Alternative: Standalone Python Summarizer (more reliable than cron prompt)
+
+For environments where the Hermes cron prompt summarization is too slow or unreliable (e.g., large context timing out), use a standalone Python script instead:
+
+**`~/daily-memory.py`:**
+
+```python
+#!/usr/bin/env python3
+"""Daily summarizer — reads JSONL session files directly, calls Hermes API."""
+import json, os, sys, urllib.request
+from datetime import date, datetime
+from pathlib import Path
+
+HERMES_HOME = Path(os.path.expanduser("~/.hermes"))
+MEMORIES_DIR = Path(os.path.expanduser("~/daily-memories"))
+API_URL = "http://localhost:8642/v1"
+API_KEY = "<your-api-server-key>"
+
+MEMORIES_DIR.mkdir(parents=True, exist_ok=True)
+
+def get_today_msgs():
+    """Read all session files and collect today's messages by timestamp."""
+    today = date.today()
+    all_msgs = []
+    for f in sorted((HERMES_HOME / "sessions").glob("*.jsonl")):
+        try:
+            with open(f) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        msg = json.loads(line)
+                        ts = msg.get("timestamp", "")
+                        if ts and ts.startswith(today.isoformat()):
+                            all_msgs.append(msg)
+                    except: pass
+        except: pass
+    return all_msgs
+
+def build_prompt(msgs):
+    """Compact prompt from last 50 meaningful user messages."""
+    msgs = msgs[-50:]
+    text = []
+    total = 0
+    for m in msgs:
+        c = m.get("content", "")
+        if not c or not isinstance(c, str) or m.get("role") == "system": continue
+        if len(c) > 500: c = c[:500] + "..."
+        line = f"[{m['role']}] {c}\n"
+        total += len(line)
+        if total > 15000: break
+        text.append(line)
+    return f"Summarize today's work in 3-5 bullet points:\n\n{''.join(text)}"
+
+def call_api(prompt):
+    data = json.dumps({"model": "hermes-agent",
+        "messages": [
+            {"role": "system", "content": "Chinese assistant. 3-5 bullet points."},
+            {"role": "user", "content": prompt}
+        ], "max_tokens": 1024}).encode()
+    req = urllib.request.Request(f"{API_URL}/chat/completions", data=data,
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {API_KEY}"})
+    resp = urllib.request.urlopen(req, timeout=120)
+    return json.loads(resp.read())["choices"][0]["message"]["content"]
+
+if __name__ == "__main__":
+    msgs = get_today_msgs()
+    if len(msgs) < 3:
+        print("No significant conversation today.")
+        (MEMORIES_DIR / f"{date.today().isoformat()}.md") \
+            .write_text(f"# {date.today()}\n\nNo significant conversation.\n")
+        sys.exit(0)
+    summary = call_api(build_prompt(msgs))
+    path = MEMORIES_DIR / f"{date.today().isoformat()}.md"
+    path.write_text(f"# 📅 {date.today()}\n\n{summary}\n\n---\nAuto-generated {datetime.now()}\n")
+    print(f"Saved: {path}")
+```
+
+**Benefits over cron prompt approach:** No session_search dependency, deterministic execution, handles large contexts by trimming, can be debugged directly. Downside: reads raw JSONL files so it's Hermes-internal-format sensitive.
+
+**Set up as a Hermes cron job** (same as step 4, but prompt is simpler):
+```bash
+hermes cron create ... --prompt "Run: cd /root && python3 daily-memory.py all"
+```
+
+The `all` mode can include QQ notification and GitHub sync within the same script.
 
 Edit `sync.sh` (your existing GitHub backup script) to include the daily-memories directory:
 
@@ -172,9 +258,33 @@ cp -r ~/daily-memories/. ./daily-memories/ 2>/dev/null || true
 git add ... daily-memories/
 ```
 
-### QQ Notification via NapCat (not curl)
+### QQ Notification via NapCat (HTTP or WebSocket)
 
-NapCat's port 3001 is a **WebSocket endpoint**, not HTTP. The `curl` approach in earlier versions of this skill is wrong — it will fail silently. Instead, use a Node.js WebSocket client script.
+NapCat's port 3001 supports **both HTTP and WebSocket**. HTTP via `curl` works reliably for simple text messages. Use whichever fits your architecture better.
+
+#### HTTP approach (simpler):
+
+```bash
+curl -s http://127.0.0.1:3001/send_private_msg \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"action":"send_private_msg","params":{"user_id":3240171077,"message":"📅 今日记忆"}}'
+```
+
+For Python scripts (like the standalone summarizer below):
+```python
+import urllib.request, json
+req = urllib.request.Request(
+    "http://127.0.0.1:3001/send_private_msg",
+    data=json.dumps({"action": "send_private_msg",
+                     "params": {"user_id": 3240171077, "message": msg}}).encode(),
+    headers={"Content-Type": "application/json"})
+urllib.request.urlopen(req, timeout=10)
+```
+
+Note: The target QQ user ID (3240171077) is the numeric QQ account, not the hex gateway ID.
+
+#### WebSocket approach (more robust for long messages):
 
 Create `/opt/napcat/send_qq_text.js`:
 
