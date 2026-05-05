@@ -487,18 +487,20 @@ print('OK')
 #### 4. Inject frontend sidebar entry (loader.js)
 
 Create `loader.js` on the host and copy it in. This JS must be wrapped in an IIFE so it doesn't pollute the global scope. It:
-- Polls the DOM until the sidebar items container `div.-mt-\[0\.5px\]` appears (Svelte rendering delay)
+- Polls the DOM until the sidebar items container `div.-mt-[0.5px]` appears (Svelte rendering delay)
 - Appends a `📖` button styled to match the other sidebar items (`<a>` for 新对话, `<button>` for 搜索, etc.)
+- Uses `.onclick = fn` (NOT innerHTML with onclick attribute) to avoid IIFE scope issues
 - On click, creates a slide-out `<div>` panel (position: fixed, right: 0, width: 480px, z-index: 9999)
 - The panel fetches from `/api/daily-memories` and renders a date list
 - Clicking a date fetches `/api/daily-memories/{date}` and renders MD as HTML (basic regex-based markdown, no library needed)
 - Back button returns to the list; close (✕) removes the panel
 
 **Key rules for loader.js:**
-- All functions must be inside the IIFE — use `.addEventListener()` or programmatic `.onclick = fn` (not inline HTML `onclick=`) since IIFE-scoped functions aren't globally accessible
+- All functions must be inside the IIFE — use `.addEventListener()` or programmatic `.onclick = fn` (NOT inline HTML `onclick=`) since IIFE-scoped functions aren't globally accessible. This is critical — innerHTML with inlined onclick handlers silently fails.
 - Use `onmouseenter/leave` for hover (inline CSS transitions)
 - Panel must be on the right side to avoid conflicting with Open WebUI's chat panel
 - Use CSS variables from Open WebUI's theme (`--color-bg`, `--color-text`, `--color-card`, `--color-hover`, `--color-border`) for consistent dark/light theme
+- **Mobile sidebar is a separate Svelte component** — injection into `.-mt-[0.5px]` works on desktop but NOT on mobile. The mobile sidebar drawer uses different DOM elements rendered conditionally by Svelte. For mobile support, elevate the injection to the sidebar container level (`div.pt-[7px]`) and insert between sections, or use a MutationObserver to detect aria-label="New Chat" elements appearing dynamically. The cleanest fallback is a small floating button (`position:fixed;bottom:80px;right:16px;`) that shows only on narrow viewports (CSS media query or JS `window.innerWidth < 768`).
 
 Template for `loader.js`:
 
@@ -507,50 +509,37 @@ Template for `loader.js`:
   function inject() {
     if (document.getElementById('daily-memories-btn')) return;
 
-    // Inject into sidebar items container (desktop + mobile drawer)
+    // Inject into sidebar items container (desktop only — mobile needs separate handling)
     const container = document.querySelector('.-mt-\\[0\\.5px\\]');
     if (!container) return false;
 
+    const btn = document.createElement('button');
+    btn.id = 'daily-memories-btn';
+    btn.className = 'cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group';
+    btn.style.cssText = 'width:100%;padding:0;border:none;background:transparent;color:inherit;';
+    btn.innerHTML = `
+      <div class="self-center flex items-center justify-center size-9">📖</div>
+      <span style="align-self:center;font-size:14px;margin-left:8px;white-space:nowrap;">每日记忆</span>
+    `;
+    btn.onclick = togglePanel; // Use programmatic onclick, NOT inline HTML onclick
+
     const wrapper = document.createElement('div');
-    wrapper.innerHTML = `
-      <div class="flex">
-        <button id="daily-memories-btn"
-          class="cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group"
-          draggable="false" aria-label="Daily Memories"
-          style="width:100%;padding:0;border:none;background:transparent;color:inherit;">
-          <div class="self-center flex items-center justify-center size-9">📖</div>
-          <span class="sidebar-item-label" style="
-            display:none;align-self:center;font-size:14px;margin-left:8px;white-space:nowrap;
-          ">每日记忆</span>
-        </button>
-      </div>`;
-
-    const btn = wrapper.querySelector('button');
-    btn.onclick = function(e) { e.stopPropagation(); togglePanel(); };
-
-    // Track sidebar collapsed/expanded state
-    function updateLabel() {
-      const label = wrapper.querySelector('.sidebar-item-label');
-      if (!label) return;
-      const sidebar = container.closest('[class*="pt-["]');
-      label.style.display = (sidebar && sidebar.offsetWidth > 60) ? 'inline' : 'none';
-    }
-    setTimeout(updateLabel, 500);
-    const ro = new ResizeObserver(updateLabel);
-    const sidebarEl = container.closest('[class*="pt-["]');
-    if (sidebarEl) ro.observe(sidebarEl);
-
-    container.appendChild(wrapper.firstElementChild);
+    wrapper.className = 'flex';
+    wrapper.appendChild(btn);
+    container.appendChild(wrapper);
     return true;
   }
 
-  function togglePanel() { /* create slide-out panel, call loadList() */ }
-  async function loadList() { /* GET /api/daily-memories, render as clickable list */ }
-  async function loadContent(date) { /* GET /api/daily-memories/{date}, render MD */ }
+  function togglePanel() { /* ... */ }
+  async function loadList() { /* ... */ }
+  async function loadContent(date) { /* ... */ }
 
   // Start on DOMContentLoaded, keep retrying for Svelte render delay
   document.addEventListener('DOMContentLoaded', inject);
-  setInterval(() => { if (!document.getElementById('daily-memories-btn')) inject(); }, 1000);
+  const iv = setInterval(() => {
+    if (document.getElementById('daily-memories-btn')) { clearInterval(iv); return; }
+    inject();
+  }, 1000);
 })();
 ```
 
@@ -610,7 +599,11 @@ docker restart open-webui
 - **main.py patches are fragile**: Open WebUI updates may change the import block layout. If a container upgrade fails, re-examine the exact lines before vs after `calendar,` and adjust.
 - **loader.js IIFE scoping**: All functions and event handlers must live inside the IIFE closure. Do NOT use inline `onclick` attributes in innerHTML (those require global functions). Use `.onclick = fn` after inserting elements, or use `document.getElementById(...).onclick = fn`.
 - The sidebar `<nav>` element may not exist at DOMContentLoaded (it's inside the Svelte app). The sidebar items container is `div.-mt-\[0\.5px\]` — **this is the injection target** because it exists in both desktop and mobile layouts.
-- On mobile, Open WebUI uses a sliding drawer sidebar. The items container `.-mt-\[0\.5px\]` lives inside this drawer too, so injecting there makes the button appear on both desktop and mobile. Do NOT inject into `<nav>` — that's only the top toolbar on desktop and is invisible on mobile.
+- On mobile, Open WebUI uses a sliding drawer sidebar that is a **separate Svelte component** from the desktop sidebar. The `.-mt-[0.5px]` container exists only in the desktop layout. Injecting there does NOT make the button appear on mobile. For mobile compatibility, see the "Mobile sidebar" pitfall above.
+- **Mobile sidebar is a separate Svelte component**: The desktop sidebar (`div.-mt-[0.5px]`) and the mobile sliding drawer are different DOM trees. Injecting into `.-mt-[0.5px]` works on desktop but does NOT automatically appear in the mobile drawer. Solutions:
+  - Inject at a HIGHER level: Insert the button into the sidebar container (`div.pt-[7px]`) as a new section between the nav items and the user profile, using `sidebar.insertBefore(btn, bottomSection)`. This puts it between the navigation items and the Groups/Chats section that appears on mobile.
+  - Or use a MutationObserver that watches for aria-label="New Chat" elements appearing dynamically and injects alongside them.
+  - Or add a floating action button (visible only on narrow viewports) as a mobile fallback.
 - **Style the button to match existing sidebar items**: Use the same class structure `cursor-pointer flex rounded-xl hover:bg-gray-100 dark:hover:bg-gray-850 transition group` that the other nav items (新对话, 搜索, 笔记, Workspace) use. This ensures consistent appearance in both collapsed (icon-only) and expanded (icon+label) sidebar states.
 - **`loader.js` is loaded before the SPA mounts**: The script runs, sees no nav, sets up the polling interval, and injects the button once the Svelte app renders the nav. The polling must continue until successful.
 - **Volume mount is read-only (`:ro`)**: The memories are generated by the cron job on the host; the container only reads them.
