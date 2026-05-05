@@ -47,16 +47,48 @@ curl -s -H "Authorization: Bot {app_id}.{client_secret}" https://api.sgroup.qq.c
 
 ### Fix: Hermes Gateway QQ Bot Token Expiration
 
-1. Go to https://q.qq.com/ and log in (scan QR code with QQ mobile app)
-2. Navigate to app management → find bot with app_id **1903820137**
-3. Regenerate the **client_secret**
-4. Update config:
-   ```bash
-   # Edit /root/.hermes/config.yaml, replace client_secret under platforms → qq → extra
+1. Go to https://q.qq.com/ and log in
+2. **Login approach:** QR code scan via mobile QQ app is more reliable than password login
+   - On the login page, click **快捷登录** (quick login) to trigger QR code display
+   - Screenshot the QR code area and send to user's QQ via NapCat:
+     ```bash
+     # Check the browser screenshot path and send via NapCat
+     cp /root/.hermes/cache/screenshots/browser_screenshot_xxx.png /root/qrcode.png
+     python3 -c "
+     import json, asyncio, websockets, base64
+     async def send():
+         async with websockets.connect('ws://127.0.0.1:3001') as ws:
+             await asyncio.wait_for(ws.recv(), timeout=5)
+             with open('/root/qrcode.png', 'rb') as f:
+                 img_b64 = base64.b64encode(f.read()).decode()
+             msg = {'action': 'send_private_msg', 'params': {'user_id': 3240171077,
+                 'message': [{'type':'text','data':{'text':'扫码登录开放平台：'}},
+                             {'type':'image','data':{'file':f'base64://{img_b64}'}}]}}
+             await ws.send(json.dumps(msg))
+             resp = await asyncio.wait_for(ws.recv(), timeout=10)
+             print(resp)
+     asyncio.run(send())
+     "
+     ```
+   - ⚠️ Password login (QQ number + password) often triggers image CAPTCHA that's hard to bypass via browser automation. QR code is preferred.
+3. After login, navigate to app management → find bot with app_id **1903820137**
+4. Regenerate the **client_secret**
+5. Update config.yaml:
+   
+   The `client_secret` is at this exact path in `/root/.hermes/config.yaml`:
+   ```yaml
+   platforms:
+     qq:
+       extra:
+         client_secret: <new_secret>   # ← Replace this
    ```
-5. Restart Hermes Gateway:
+   
+   Update with:
    ```bash
-   # Find gateway PID and restart it
+   # Edit /root/.hermes/config.yaml with new secret, then restart gateway
+   ```
+6. Restart Hermes Gateway:
+   ```bash
    pkill -f "hermes_cli.main gateway" && sleep 2
    # Or via systemd if configured
    systemctl restart hermes
