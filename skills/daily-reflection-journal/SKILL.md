@@ -28,8 +28,9 @@ The user wants some variant of:
 This is distinct from:
 - **`github-auto-sync`** — that skill covers *how* to sync files to GitHub (the git mechanics). This skill covers the *full end-to-end workflow*: what to summarize, the file structure, the cron prompt design, the web viewer, and the notification chain.
 - **`webhook-subscriptions`** — event-driven (external POST → agent run). This skill is time-driven (cron → agent run).
+## Architecture (Two Options)
 
-## Architecture
+### Option A — Standalone HTTP Server (simpler, works with any env)
 
 ```
 [Hermes Cron] 23:59 daily
@@ -38,15 +39,38 @@ This is distinct from:
       ├─ Summarize → YYYY-MM-DD.md (structured markdown)
       ├─ Update list.json ←─→ index.html (web viewer)
       ├─ git push to GitHub (via sync.sh)
-      └─ node → NapCat QQ Bot (or Telegram/Discord)\n```
+      └─ node → NapCat QQ Bot (or Telegram/Discord)
+```
+
+### Option B — Open WebUI Integration (for users who run Open WebUI)
+
+Same cron + summarization pipeline, but the **web viewer** is served directly inside Open WebUI's sidebar via API route injection + frontend JS injection into the Docker container. The standalone `server.py` and `index.html` are not needed.
+
+```
+[Hermes Cron] → ~/daily-memories/YYYY-MM-DD.md  (same as Option A)
+                           │
+              mounted ro into Open WebUI container
+                           │
+              ┌────────────┴────────────┐
+              │ Custom FastAPI route    │
+              │ (GET /api/daily-memories)│
+              └────────────┬────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │ loader.js injects       │
+              │ sidebar "📖 每日记忆" btn│
+              │ → slide-out panel       │
+              │ → fetch + render MD     │
+              └─────────────────────────┘
+```
 
 ### File Layout (`~/daily-memories/`)
 
 ```
 ~/daily-memories/
-├── index.html          # Web viewer (marked.js-based, dark theme)
-├── list.json           # ["2026-05-05", "2026-05-04", ...] (newest first)
-├── server.py           # Python HTTP server (serves on PORT, default 8080)
+├── index.html          # [Option A only] Web viewer (marked.js-based, dark theme)
+├── list.json           # [Option A only] ["2026-05-05", "2026-05-04", ...] (newest first)
+├── server.py           # [Option A only] Python HTTP server
 ├── 2026-05-05.md       # Daily summary
 ├── 2026-05-04.md
 └── ...
@@ -357,6 +381,216 @@ Run this from `~/daily-memories/` after writing the new .md file.
 ### Cron `run` reschedules, doesn't execute immediately
 
 `cronjob run` updates `next_run_at` to now+scheduler_tick — it does **not** run the job synchronously. The next scheduler tick (usually within 30-60s) triggers execution. Use `cronjob list` to verify `last_run_at` and `last_status` changed.
+
+## Option B — Open WebUI Integration (replaces standalone HTTP viewer)
+
+Integrate daily memories directly into Open WebUI's sidebar — no separate port, no extra server, unified UI.
+
+### Prerequisites
+
+- Open WebUI running in Docker (container named `open-webui`)
+- `~/daily-memories/` already populated by the cron summarizer
+
+### What Gets Modified Inside the Container
+
+| File | Action | Purpose |
+|---|---|---|
+| `/app/backend/open_webui/routers/daily_memories.py` | Add new | FastAPI router: `GET /api/daily-memories` and `GET /api/daily-memories/{date}` |
+| `/app/backend/open_webui/main.py` | Patch import+route | Register the router |
+| `/app/build/static/loader.js` | Overwrite | Inject sidebar button and slide-out panel |
+
+### Setup Steps
+
+#### 1. Create the FastAPI router
+
+On the host, create `/tmp/daily_memories_router.py`:
+
+```python
+import os, json
+from pathlib import Path
+from datetime import datetime
+from fastapi import APIRouter, HTTPException, Request
+import logging
+
+log = logging.getLogger(__name__)
+router = APIRouter()
+MEMORIES_DIR = Path("/app/daily-memories")
+
+def list_memory_files():
+    if not MEMORIES_DIR.exists(): return []
+    files = []
+    for f in sorted(MEMORIES_DIR.glob("*.md"), reverse=True):
+        date_str = f.stem
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            title = dt.strftime("%Y年%m月%d日")
+        except ValueError:
+            title = date_str
+        files.append({"date": date_str, "title": title, "path": f.name, "size": f.stat().st_size})
+    return files
+
+@router.get("/api/daily-memories")
+async def list_memories(request: Request):
+    return list_memory_files()
+
+@router.get("/api/daily-memories/{date}")
+async def get_memory(date: str, request: Request):
+    filepath = MEMORIES_DIR / f"{date}.md"
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"date": date, "content": filepath.read_text(encoding="utf-8")}
+```
+
+#### 2. Recreate container with volume mount
+
+```bash
+docker stop open-webui && docker rm open-webui
+
+docker run -d --name open-webui \
+  -p 3000:8080 \
+  --add-host host.docker.internal=host-gateway \
+  -e OPENAI_API_BASE_URL=http://host.docker.internal:8642/v1 \
+  -e OPENAI_API_KEY=your-key \
+  -e WEBUI_SECRET_KEY=your-secret \
+  -e ANONYMIZED_TELEMETRY=false \
+  -v ~/daily-memories:/app/daily-memories:ro \
+  ghcr.io/open-webui/open-webui:main
+```
+
+#### 3. Inject router + patch main.py
+
+```bash
+# Copy router
+docker cp /tmp/daily_memories_router.py open-webui:/app/backend/open_webui/routers/daily_memories.py
+
+# Patch main.py (add import + route registration)
+docker exec open-webui python3 -c "
+with open('/app/backend/open_webui/main.py', 'r') as f:
+    content = f.read()
+
+# Add import (adds 'daily_memories,' before the closing ')')
+old_imports = '    calendar,\n)'
+new_imports = '    calendar,\n    daily_memories,\n)'
+content = content.replace(old_imports, new_imports)
+
+# Add route registration after calendar
+old_route = \"app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])\"
+new_route = old_route + \"\n\napp.include_router(daily_memories.router, tags=['daily_memories'])\"
+content = content.replace(old_route, new_route)
+
+with open('/app/backend/open_webui/main.py', 'w') as f:
+    f.write(content)
+print('OK')
+"
+```
+
+#### 4. Inject frontend sidebar entry (loader.js)
+
+Create `loader.js` on the host and copy it in. This JS must be wrapped in an IIFE so it doesn't pollute the global scope. It:
+- Polls the DOM until the sidebar `<nav>` element appears (Svelte rendering delay)
+- Appends a `📖 每日记忆` button to the nav
+- On click, creates a slide-out `<div>` panel (position: fixed, right: 0, width: 480px, z-index: 9999)
+- The panel fetches from `/api/daily-memories` and renders a date list
+- Clicking a date fetches `/api/daily-memories/{date}` and renders MD as HTML (basic regex-based markdown, no library needed)
+- Back button returns to the list; close (✕) removes the panel
+
+**Key rules for loader.js:**
+- All functions must be inside the IIFE — use `.addEventListener()` or programmatic `.onclick = fn` (not inline HTML `onclick=`) since IIFE-scoped functions aren't globally accessible
+- Use `onmouseenter/leave` for hover (inline CSS transitions)
+- Panel must be on the right side to avoid conflicting with Open WebUI's chat panel
+- Use CSS variables from Open WebUI's theme (`--color-bg`, `--color-text`, `--color-card`, `--color-hover`, `--color-border`) for consistent dark/light theme
+
+Template for `loader.js`:
+
+```javascript
+(function() {
+  let currentData = null;
+
+  function init() {
+    if (document.getElementById('daily-memories-btn')) return;
+    function tryAdd() {
+      const nav = document.querySelector('[class*="sidebar"] nav') || document.querySelector('nav');
+      if (!nav || document.getElementById('daily-memories-btn')) return false;
+      const btn = document.createElement('button');
+      btn.id = 'daily-memories-btn';
+      btn.textContent = '📖 每日记忆';
+      btn.style.cssText = `display:flex;align-items:center;gap:8px;padding:8px 12px;width:100%;border:none;background:transparent;color:var(--color-text,#ccc);cursor:pointer;font-size:14px;border-radius:8px;`;
+      btn.onmouseenter = () => btn.style.background = 'var(--color-hover,rgba(255,255,255,0.1))';
+      btn.onmouseleave = () => btn.style.background = 'transparent';
+      btn.onclick = togglePanel;
+      nav.appendChild(btn);
+      return true;
+    }
+    if (!tryAdd()) setTimeout(tryAdd, 1500);
+  }
+
+  function togglePanel() { /* create slide-out panel, call loadList() */ }
+  async function loadList() { /* GET /api/daily-memories, render as clickable list */ }
+  async function loadContent(date) { /* GET /api/daily-memories/{date}, render MD */ }
+
+  // Start on DOMContentLoaded, keep retrying for Svelte render delay
+  document.addEventListener('DOMContentLoaded', init);
+  setInterval(() => { if (!document.getElementById('daily-memories-btn')) init(); }, 1000);
+})();
+```
+
+Copy and restart:
+```bash
+docker cp /path/to/loader.js open-webui:/app/build/static/loader.js
+docker restart open-webui
+```
+
+#### 5. Verify
+
+```bash
+# Backend API
+curl -s http://localhost:3000/api/daily-memories | python3 -m json.tool
+curl -s http://localhost:3000/api/daily-memories/2026-05-05 | python3 -m json.tool
+
+# Frontend: open http://localhost:3000 — sidebar should show "📖 每日记忆" button
+```
+
+### Recovery Script
+
+If the container is ever recreated (docker rm), keep a setup script ready:
+
+```bash
+#!/bin/bash
+# setup-openwebui-memories.sh
+docker cp /tmp/daily_memories_router.py open-webui:/app/backend/open_webui/routers/daily_memories.py
+docker cp /path/to/loader.js open-webui:/app/build/static/loader.js
+docker exec open-webui python3 -c "
+with open('/app/backend/open_webui/main.py') as f: c = f.read()
+c = c.replace('    calendar,\n)', '    calendar,\n    daily_memories,\n)')
+c = c.replace(\"app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])\",
+  \"app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])\" +
+  \"\n\napp.include_router(daily_memories.router, tags=['daily_memories'])\")
+with open('/app/backend/open_webui/main.py', 'w') as f: f.write(c)
+print('OK')
+"
+docker restart open-webui
+```
+
+### Differences from Option A
+
+| Aspect | Option A (standalone) | Option B (Open WebUI) |
+|---|---|---|
+| Extra port | Yes (8080 or 4000) | No (uses Open WebUI's 3000) |
+| Extra Docker container | Yes (nginx or Python) | No |
+| Memory overhead | ~5-20MB | 0 (runs inside Open WebUI) |
+| Look & feel | Custom HTML theme | Matches Open WebUI theme |
+| Setup complexity | Low | Medium (needs container surgery) |
+| Survives `docker rm` | Yes (separate container) | No (re-run setup script) |
+| Container startup order | Independent | Must wait for open-webui |
+
+### Pitfalls (Open WebUI-specific)
+
+- **main.py patches are fragile**: Open WebUI updates may change the import block layout. If a container upgrade fails, re-examine the exact lines before vs after `calendar,` and adjust.
+- **loader.js IIFE scoping**: All functions and event handlers must live inside the IIFE closure. Do NOT use inline `onclick` attributes in innerHTML (those require global functions). Use `.onclick = fn` after inserting elements, or use `document.getElementById(...).onclick = fn`.
+- **Svelte rendering delay**: The sidebar `<nav>` element may not exist at DOMContentLoaded. Use a polling loop (setInterval up to 30s, 1s interval) to retry button injection.
+- **`loader.js` is loaded before the SPA mounts**: The script runs, sees no nav, sets up the polling interval, and injects the button once the Svelte app renders the nav. The polling must continue until successful.
+- **Volume mount is read-only (`:ro`)**: The memories are generated by the cron job on the host; the container only reads them.
+- **Theme consistency**: Open WebUI stores theme in `localStorage.theme` (values: 'dark', 'light', 'system', 'oled-dark', 'her'). CSS variables like `--color-bg`, `--color-text` are set by the SPA. The injected panel should use these variables for seamless theme matching.
 
 ### Pitfalls & Troubleshooting
 
