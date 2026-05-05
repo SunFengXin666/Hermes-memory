@@ -12,4 +12,4 @@ IM+云盘 app /root/im-app/ (Flask+Android WebView). SFTP需set_keepalive(15)防
 §
 Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes accumulate over days (~150MB each). First step when lag reported: `pkill -f chromium-browser`. No swap configured.
 §
-Daily memory plugin "daily-memory" (on_session_end, ~/.hermes/hermes-agent/plugins/daily-memory/): auto-saves all conversations (QQ, CLI, cron) to ~/daily-memories/YYYY-MM-DD.md. WebUI at /root/webui/ (port 8080) has /api/save-conversation for each WebUI exchange.
+每日记忆: 仅23:59 cron自动生成每日总结（会话记录不逐条存）。Cron job "3bdc54905c93" 每晚23:59用session_search抓全天对话→写~/daily-memories/YYYY-MM-DD.md→推GitHub。WebUI不写记忆文件。
