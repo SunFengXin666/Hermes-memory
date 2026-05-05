@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📅 每日记忆</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    min-height: 100vh;
+  }
+  .header {
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header h1 { font-size: 20px; }
+  .header .subtitle { color: #8b949e; font-size: 13px; }
+  .layout { display: flex; }
+  .sidebar {
+    width: 240px;
+    background: #161b22;
+    border-right: 1px solid #30363d;
+    padding: 12px 0;
+    flex-shrink: 0;
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
+  .sidebar .date-item {
+    padding: 10px 20px;
+    cursor: pointer;
+    color: #8b949e;
+    font-size: 14px;
+    border-left: 3px solid transparent;
+    transition: 0.15s;
+  }
+  .sidebar .date-item:hover { color: #e6edf3; background: rgba(255,255,255,0.03); }
+  .sidebar .date-item.active {
+    color: #58a6ff;
+    border-left-color: #58a6ff;
+    background: rgba(88,166,255,0.08);
+  }
+  .main {
+    flex: 1;
+    padding: 24px 40px;
+    max-width: 900px;
+  }
+  .main .empty {
+    text-align: center;
+    padding: 80px 0;
+    color: #8b949e;
+  }
+  .main .empty .emoji { font-size: 48px; margin-bottom: 16px; }
+  .main .content { line-height: 1.8; }
+  .main .content h2 { margin-top: 32px; margin-bottom: 16px; font-size: 18px; }
+  .main .content h3 { margin-top: 24px; margin-bottom: 12px; font-size: 16px; color: #58a6ff; }
+  .main .content ul { padding-left: 20px; margin-bottom: 12px; }
+  .main .content li { margin-bottom: 6px; }
+  .main .content strong { color: #f0883e; }
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .main { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📅 每日记忆</h1>
+  <span class="subtitle">你的学习和工作日记</span>
+</div>
+<div class="layout">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main" id="main"></div>
+</div>
+<script>
+const DATA_URL = '';
+async function loadDateList() {
+  try {
+    const resp = await fetch('./list.json');
+    const dates = await resp.json();
+    const sidebar = document.getElementById('sidebar');
+    sidebar.innerHTML = dates.map(d =>
+      `<div class="date-item" data-date="${d}" onclick="loadDate('${d}')">${d}</div>`
+    ).join('');
+    if (dates.length > 0) {
+      const hash = location.hash.slice(1);
+      loadDate(hash || dates[0]);
+    }
+  } catch(e) {
+    document.getElementById('sidebar').innerHTML = '<div class="date-item" style="color:#f85149">加载失败</div>';
+  }
+}
+async function loadDate(date) {
+  location.hash = date;
+  document.querySelectorAll('.date-item').forEach(el => el.classList.remove('active'));
+  const el = document.querySelector(`[data-date="${date}"]`);
+  if (el) el.classList.add('active');
+  const main = document.getElementById('main');
+  main.innerHTML = '<div class="empty"><div class="emoji">⏳</div><div>加载中...</div></div>';
+  try {
+    const resp = await fetch(`./${date}.md`);
+    const md = await resp.text();
+    main.innerHTML = `<div class="content">${marked.parse(md)}</div>`;
+  } catch(e) {
+    main.innerHTML = '<div class="empty"><div class="emoji">❌</div><div>无法加载该日记录</div></div>';
+  }
+}
+loadDateList();
+</script>
+</body>
+</html>
