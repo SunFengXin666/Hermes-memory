@@ -167,5 +167,6 @@ For servers running 24/7:
 - **Chrome auto-restart** — some setups monitor Chrome and restart it. If Chrome comes back immediately after kill, check for a systemd service or restart script.
 - **`kill` vs `pkill`** — `kill <PID>` kills only the main process; renderer children may survive. `pkill -f chromium-browser` kills all matching processes.
 - **Open WebUI** on port 8080 may conflict with other services. Check before stopping.
+- **NapCat QQ Bot (Docker, napcatf container)** — runs the full QQ NT protocol inside Docker with an embedded browser (~200-400MB). When memory < 200MB available, the internal browser chokes, producing `LongTask` delays, and QQ server force-disconnects with `账号状态变更为离线`. Fix memory first, then restart the container or worker.
 - **QQ desktop client** runs as a process (~60MB) — it's unusual on a server, check if intentional before killing.
 - **Tencent Cloud YunJing (YDService)** — vendor monitoring agent, ~70MB. Do not kill.
