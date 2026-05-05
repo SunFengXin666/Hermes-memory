@@ -809,13 +809,45 @@ When responses feel slow, the cause is usually one of these:
 ### Gateway issues
 Check logs first:
 ```bash
-grep -i "failed to send\\|error" ~/.hermes/logs/gateway.log | tail -20
+grep -i "failed to send\\\\|error" ~/.hermes/logs/gateway.log | tail -20
 ```
 
 Common gateway problems:
 - **Gateway dies on SSH logout**: Enable linger: `sudo loginctl enable-linger $USER`
 - **Gateway dies on WSL2 close**: WSL2 requires `systemd=true` in `/etc/wsl.conf` for systemd services to work. Without it, gateway falls back to `nohup` (dies when session closes).
 - **Gateway crash loop**: Reset the failed state: `systemctl --user reset-failed hermes-gateway`
+
+### QQ Bot platform connection failures
+
+**Symptom:** Gateway log shows `invalid appid or secret` (code 100016) or `Token错误` (code 11243).
+
+**Root causes and fixes:**
+
+1. **Client secret expired**: Tencent QQ Bot API tokens expire periodically. Re-generate via QQ Open Platform:
+   - Go to https://q.qq.com/ and log in
+   - Navigate to 机器人 (Bots) → find your bot → click 高级设置
+   - Click 查看 next to AppSecret (first view shows current secret; second view forces a reset)
+   - After reset, copy the new full secret
+
+2. **.env file overrides config.yaml**: This is the most common gotcha. The gateway reads credentials with this priority:
+   ```
+   1. Environment variable QQ_CLIENT_SECRET (highest)
+   2. ~/.hermes/.env file (sourced at process start)
+   3. config.yaml platforms.qq.extra.client_secret (lowest)
+   ```
+   If you updated `config.yaml` but `~/.hermes/.env` still has the old `QQ_CLIENT_SECRET=xxx`, the old value wins. **Always update both files**, or unset the env var when starting the gateway:
+   ```bash
+   env -u QQ_CLIENT_SECRET -u QQ_APP_ID /path/to/hermes gateway run
+   ```
+
+3. **Verify the secret works**: Test before restarting:
+   ```bash
+   curl -s -X POST "https://bots.qq.com/app/getAppAccessToken" \
+     -H "Content-Type: application/json" \
+     -d '{"appId":"YOUR_APP_ID","clientSecret":"YOUR_SECRET"}'
+   # Expected: {"access_token": "...", "expires_in": "7200"}
+   # Error: {"code":100016,"message":"invalid appid or secret"}
+   ```
 
 ### Platform-specific issues
 - **Discord bot silent**: Must enable **Message Content Intent** in Bot → Privileged Gateway Intents.
