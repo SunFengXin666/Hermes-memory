@@ -266,6 +266,108 @@ Use `startsWith(diskRoot)` for the boundary check rather than comparing string l
 | User with quota/workspace directory | `/home/user/workspace` | Locked mode — can't go above this dir |
 | Project-specific sandbox | `/opt/projects/123` | Locked — user only sees their project files |
 
+## Auto-Connect from Saved Config (Persistent Single-Server UX)
+
+After the user connects once, save the full server config to `localStorage` so they never have to re-enter credentials. On disk page load, auto-connect if a saved config exists.
+
+### Frontend: Save on Connect, Auto-Connect on Load
+
+```javascript
+let diskConnId = null;
+let diskPath = '/';
+let diskRoot = null;
+
+// === Auto-connect ===
+function autoConnect() {
+  const saved = localStorage.getItem('diskServer');
+  if (!saved) return;
+  try {
+    const cfg = JSON.parse(saved);
+    if (!cfg.host) return;
+    showToast('正在连接 ' + cfg.host + '…');
+    fetch('/api/disk/connect', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({...cfg, root_path: cfg.root_path || undefined})
+    }).then(r=>r.json()).then(data => {
+      if (!data.ok) { showToast('自动连接失败'); return; }
+      diskConnId = data.conn_id;
+      diskRoot = data.root_path || null;
+      const label = diskRoot ? '🔒 ' + cfg.host : '☁️ ' + cfg.host;
+      document.getElementById('disk-server-name').textContent = label;
+      document.getElementById('disk-connect-btn').textContent = '断开';
+      document.getElementById('disk-connect-btn').onclick = disconnectServer;
+      diskPath = diskRoot || '/';
+      diskList(diskPath);
+    }).catch(() => {});
+  } catch(e) {}
+}
+
+// === Disconnect ===
+function disconnectServer() {
+  if (!diskConnId) return;
+  fetch(`/api/disk/${diskConnId}/disconnect`, { method:'POST' }).catch(()=>{});
+  diskConnId = null; diskRoot = null; diskPath = '/';
+  document.getElementById('disk-server-name').textContent = '☁️ 未连接';
+  document.getElementById('disk-connect-btn').textContent = '连接';
+  document.getElementById('disk-connect-btn').onclick = showServerModal;
+  document.getElementById('current-path').textContent = '/';
+  document.getElementById('disk-files').innerHTML =
+    '<div class="disk-empty">点击「连接」输入服务器信息</div>';
+}
+```
+
+### Trigger auto-connect on page/disk switch
+
+In `switchPage()` (or equivalent page navigation function), check if not already connected:
+
+```javascript
+function switchPage(name) {
+  if (name === 'disk') {
+    // ... show disk page ...
+    if (!diskConnId) autoConnect();  // <--- key line
+  }
+  // ...
+}
+```
+
+### Save config after successful manual connect
+
+At the end of `connectServer()`, after receiving a successful response:
+
+```javascript
+localStorage.setItem('diskServer', JSON.stringify({
+  host, port, username, password,
+  root_path: rootPath || ''
+}));
+```
+
+### Button state toggle
+
+The same "连接" button becomes "断开" after connecting, with `onclick` toggling between `showServerModal` and `disconnectServer`. This is cleaner than having two separate buttons:
+
+```html
+<button class="disk-add-btn" id="disk-connect-btn"
+        onclick="showServerModal()">连接</button>
+```
+
+```javascript
+// After connect:
+document.getElementById('disk-connect-btn').textContent = '断开';
+document.getElementById('disk-connect-btn').onclick = disconnectServer;
+
+// After disconnect:
+document.getElementById('disk-connect-btn').textContent = '连接';
+document.getElementById('disk-connect-btn').onclick = showServerModal;
+```
+
+### UX Flow
+
+1. First visit → "☁️ 未连接" + "连接" button → user fills modal → connects
+2. Config saved to localStorage
+3. Refresh page / come back later → click "云盘" → auto-connects silently
+4. "断开" button available to switch servers
+5. Connecting to a new server overwrites the saved config
+
 ## Disk Usage Endpoint
 
 Three approaches, choose based on your use case:
