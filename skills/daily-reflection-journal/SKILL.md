@@ -38,8 +38,7 @@ This is distinct from:
       ├─ Summarize → YYYY-MM-DD.md (structured markdown)
       ├─ Update list.json ←─→ index.html (web viewer)
       ├─ git push to GitHub (via sync.sh)
-      └─ curl → NapCat QQ Bot (or Telegram/Discord)
-```
+      └─ node → NapCat QQ Bot (or Telegram/Discord)\n```
 
 ### File Layout (`~/daily-memories/`)
 
@@ -174,11 +173,89 @@ cp -r ~/daily-memories/. ./daily-memories/ 2>/dev/null || true
 git add ... daily-memories/
 ```
 
+### QQ Notification via NapCat (not curl)
+
+NapCat's port 3001 is a **WebSocket endpoint**, not HTTP. The `curl` approach in earlier versions of this skill is wrong — it will fail silently. Instead, use a Node.js WebSocket client script.
+
+Create `/opt/napcat/send_qq_text.js`:
+
+```javascript
+/**
+ * Send QQ private text message via NapCat WebSocket (port 3001, no token)
+ * Usage: node send_qq_text.js [QQ] "message"
+ * Default QQ is your target user
+ */
+const WebSocket = require('ws');
+
+const targetQQ = process.argv[2] && /^\d+$/.test(process.argv[2])
+  ? Number(process.argv[2]) : 3240171077;
+const message = process.argv[3] || process.argv[2] || '测试消息';
+
+const ws = new WebSocket('ws://127.0.0.1:3001');
+const timeout = setTimeout(() => { console.error('Timeout'); process.exit(1); }, 8000);
+
+ws.on('open', () => {
+  ws.send(JSON.stringify({
+    action: 'send_private_msg',
+    params: { user_id: targetQQ, message },
+    echo: 'send_text'
+  }));
+});
+
+ws.on('message', (data) => {
+  const resp = JSON.parse(data.toString());
+  if (resp.echo === 'send_text') {
+    clearTimeout(timeout);
+    process.exit(resp.status === 'ok' || resp.retcode === 0 ? 0 : 1);
+  }
+});
+
+ws.on('error', (err) => { console.error(err.message); process.exit(1); });
+setTimeout(() => process.exit(0), 8000);
+```
+
+In the cron prompt, call it as:
+```bash
+cd /opt/napcat && node send_qq_text.js "📅 每日记忆 - 2026-05-05\n\n✅ 已完成\n<摘要>\n\n🔍 学到\n<要点>\n\n📝 明日\n<待办>"
+```
+
+Keep QQ messages under 8 lines — NapCat truncates long messages silently.
+
+### Serving via nginx (alternative to server.py)
+
+Instead of `python3 server.py`, use a Docker nginx container for production:
+
+```bash
+docker run -d --name daily-memories \
+  -p 4000:80 \
+  -v ~/daily-memories:/usr/share/nginx/html:ro \
+  --restart unless-stopped \
+  nginx:alpine
+```
+
+Benefits: less memory (~5MB vs Python's ~20MB), auto-restart via Docker, better caching headers.
+
+### list.json regeneration (one-liner)
+
+Include this in the cron prompt to regenerate the JSON index:
+
+```bash
+python3 -c "import json,glob; files=sorted([f.replace('.md','') for f in glob.glob('*.md')], reverse=True); open('list.json','w').write(json.dumps(files))"
+```
+
+Run this from `~/daily-memories/` after writing the new .md file.
+
+### Cron `run` reschedules, doesn't execute immediately
+
+`cronjob run` updates `next_run_at` to now+scheduler_tick — it does **not** run the job synchronously. The next scheduler tick (usually within 30-60s) triggers execution. Use `cronjob list` to verify `last_run_at` and `last_status` changed.
+
 ## Pitfalls & Troubleshooting
 
 - **Cron job session_search() returns nothing:** If the user just started talking, there may be no sessions yet. The prompt should handle "no sessions found" gracefully (output "今日无记录" instead of failing).
 - **list.json must match .md files:** Always regenerate list.json after creating a new .md file, otherwise the web viewer shows nothing. Include this step in the cron prompt.
-- **QQ Bot 3001 vs 6099:** NapCat exposes WebSocket on port 3001 (no token) and 6099 (with token). This skill uses 3001 because curl to a WebSocket endpoint requires a helper — using the HTTP API may need a different endpoint. Alternative: use the `send_private_msg` action via NapCat's HTTP API if one is configured.
+- **QQ Bot 3001 vs 6099:** Port 3001 is WebSocket without token (simpler for internal scripts). Port 6099 requires a token but supports the NCWebsocket library. Use 3001 for simple `send_private_msg` calls from cron.
 - **Network hairpin on Chinese cloud servers:** Tencent Cloud / Alibaba Cloud don't support hairpin NAT — you can't curl your own public IP from inside the server. Use `localhost` or `127.0.0.1` for internal connections.
-- **Memory bottleneck:** The daily generation runs the full Hermes Agent loop. On a 3-4GB RAM server, ensure there's ~1GB free at the scheduled time.
+- **Memory bottleneck:** The daily generation runs the full Hermes Agent loop. On a 3-4GB RAM server, ensure there's ~1GB free at the scheduled time. Kill Chrome renderer processes (`pkill -f chromium-browser`) before the scheduled time if memory is tight.
 - **Cron job won't run if Hermes Agent gateway isn't running:** Check with `systemctl --user status hermes-gateway` or check cron job status with `cronjob list` and look at `last_status`.
+- **Hermes Agent skill must be loaded:** Before setting up cron jobs, load the `hermes-agent` skill — it documents the actual `cronjob` tool syntax and available options.
+- **Timezone of cron:** The Hermes Agent cron scheduler uses the server's local time. Check with `timedatectl` or `date +%Z`. For China servers this is usually `Asia/Shanghai (CST, UTC+8)`.
