@@ -47,33 +47,71 @@ curl -s -H "Authorization: Bot {app_id}.{client_secret}" https://api.sgroup.qq.c
 
 ### Fix: Hermes Gateway QQ Bot Token Expiration
 
-1. Go to https://q.qq.com/ and log in
-2. **Login approach:** QR code scan via mobile QQ app is more reliable than password login
-   - On the login page, click **快捷登录** (quick login) to trigger QR code display
-   - Screenshot the QR code area and send to user's QQ via NapCat:
-     ```bash
-     # Check the browser screenshot path and send via NapCat
-     cp /root/.hermes/cache/screenshots/browser_screenshot_xxx.png /root/qrcode.png
-     python3 -c "
-     import json, asyncio, websockets, base64
-     async def send():
-         async with websockets.connect('ws://127.0.0.1:3001') as ws:
-             await asyncio.wait_for(ws.recv(), timeout=5)
-             with open('/root/qrcode.png', 'rb') as f:
-                 img_b64 = base64.b64encode(f.read()).decode()
-             msg = {'action': 'send_private_msg', 'params': {'user_id': 3240171077,
-                 'message': [{'type':'text','data':{'text':'扫码登录开放平台：'}},
-                             {'type':'image','data':{'file':f'base64://{img_b64}'}}]}}
-             await ws.send(json.dumps(msg))
-             resp = await asyncio.wait_for(ws.recv(), timeout=10)
-             print(resp)
-     asyncio.run(send())
-     "
+1. **Verify the problem:**
+   ```bash
+   # Check gateway logs
+   grep -E "QQBot|qqbot" /root/.hermes/logs/gateway.log 2>/dev/null | tail -5
+   # Expected error: 'invalid appid or secret' (code 100016) or 'Token错误' (code 11243)
+   ```
+
+2. **Login to QQ Open Platform:**
+   - Navigate browser to https://q.qq.com/
+   - **PREFERRED: QR code scan** — click **快捷登录** (quick login) to get a QR code
+     - Screenshot the QR code area and send to user's QQ via NapCat:
+       ```bash
+       cp /root/.hermes/cache/screenshots/browser_screenshot_xxx.png /root/qrcode.png
+       python3 -c "
+       import json, asyncio, websockets, base64
+       async def send():
+           async with websockets.connect('ws://127.0.0.1:3001') as ws:
+               await asyncio.wait_for(ws.recv(), timeout=5)
+               with open('/root/qrcode.png', 'rb') as f:
+                   img_b64 = base64.b64encode(f.read()).decode()
+               msg = {'action': 'send_private_msg', 'params': {'user_id': 3240171077,
+                   'message': [{'type':'text','data':{'text':'扫码登录开放平台：'}},
+                               {'type':'image','data':{'file':f'base64://{img_b64}'}}]}}
+               await ws.send(json.dumps(msg))
+               resp = await asyncio.wait_for(ws.recv(), timeout=10)
+               print(resp)
+       asyncio.run(send())
+       "
+       ```
+     - After user scans, a **选择登录主体 (Select Login Entity)** dialog appears. Click the listed account (e.g., `3240171077@qq.com`), then click **确认登录**.
+   - **⚠️ Password login pitfalls:** Entering QQ number + password often triggers image CAPTCHA (图片验证码). The CAPTCHA renders inside a cross-origin iframe making it nearly impossible to automate via browser snapshot. If CAPTCHA appears, use the **快捷登录** link in the iframe to switch back to QR code mode.
+   - The page text says **"推荐使用快捷登录，防止盗号"** — always try QR first.
+
+3. **Navigate to bot management:**
+   - Left sidebar → click **机器人** (Bot/Robot) section
+   - Find bot with app_id **1903820137** (name "787")
+   - Click the bot row (ref=e11) to enter detail page
+   - The detail page shows `AppID` and hidden `AppSecret`
+
+4. **Regenerate client_secret:**
+   - Click **查看** (View) to reveal the secret
+   - A dialog appears: **确认重置** (Confirm Reset) — click it
+   - ⚠️ **IMPORTANT — the "二次查看将会强制重置" logic:** The first click of "查看" just reveals the current secret. Only clicking a SECOND time triggers the actual forced reset. If you already viewed the secret once, just click "查看" again and confirm.
+   - The new AppSecret appears in plaintext: `AppSecret\n<new_value>\n`
+   - **Critical — get the FULL value:** The secret may be partially truncated in the browser UI display. Use browser_console to extract the raw text:
+     ```javascript
+     // In browser_console tool:
+     document.body.innerText.match(/AppSecret\s*\n([^\n]{30,60})/)?.[1]?.trim()
      ```
-   - ⚠️ Password login (QQ number + password) often triggers image CAPTCHA that's hard to bypass via browser automation. QR code is preferred.
-3. After login, navigate to app management → find bot with app_id **1903820137**
-4. Regenerate the **client_secret**
-5. Update config.yaml:
+   - **⚠️ CRITICAL PITFALL — tool display truncation:** Both `read_file` and terminal commands like `cat | grep` will truncate long lines in the HERMES UI, showing **`...`** where the middle characters should be. Example: `client_secret: Rj1KeyJf1O...U4fH` when the real value is `Rj1KeyJf1OmAZzPqIkDhBgCiFnLuU4fH`. Never trust a truncated display — always verify the raw bytes:
+     ```bash
+     # Verify the actual file content (sed prints raw line)
+     sed -n '394p' /root/.hermes/config.yaml | cat -A
+     # If you see "..." in the output, the file actually has "..." — it's NOT a display truncation
+     ```
+   - **Test the secret directly** before updating config:
+     ```bash
+     curl -s -X POST "https://bots.qq.com/app/getAppAccessToken" \
+       -H "Content-Type: application/json" \
+       -d '{"appId":"1903820137","clientSecret":"<new_secret>"}'
+     # Expected: {"access_token": "xxx...", "expires_in": "xxx"}
+     # If you get {"code":100016,"message":"invalid appid or secret"}, the secret is wrong
+     ```
+
+5. **Update config.yaml:**
    
    The `client_secret` is at this exact path in `/root/.hermes/config.yaml`:
    ```yaml
@@ -83,20 +121,38 @@ curl -s -H "Authorization: Bot {app_id}.{client_secret}" https://api.sgroup.qq.c
          client_secret: <new_secret>   # ← Replace this
    ```
    
-   Update with:
+   **Use `sed` for reliable replacement** (patch tool may struggle with long strings containing special chars):
    ```bash
-   # Edit /root/.hermes/config.yaml with new secret, then restart gateway
+   # Replace the client_secret line
+   sed -i 's|client_secret:.*|client_secret: <full_new_secret>|' /root/.hermes/config.yaml
+   
+   # Verify it worked
+   grep client_secret /root/.hermes/config.yaml
    ```
-6. Restart Hermes Gateway:
+
+6. **Restart Hermes Gateway:**
    ```bash
-   pkill -f "hermes_cli.main gateway" && sleep 2
-   # Or via systemd if configured
+   # Kill existing gateway process
+   pkill -f "hermes_cli.main gateway run" 2>/dev/null
+   sleep 3
+   
+   # Start new one
+   nohup /root/.hermes/hermes-agent/venv/bin/python \
+     -m hermes_cli.main gateway run --replace \
+     >> /root/.hermes/logs/gateway.log 2>&1 &
+   ```
+   
+   Alternative if systemd is configured:
+   ```bash
    systemctl restart hermes
    ```
-6. Verify:
+
+7. **Verify:**
    ```bash
-   grep "QQBot" /root/.hermes/logs/gateway.log | tail -3
-   # Should show: WebSocket connected to wss://api.sgroup.qq.com/websocket → Reconnected → Session resumed
+   sleep 8
+   grep -E "QQBot|qqbot|connected|access token" /root/.hermes/logs/gateway.log | tail -5
+   # Expected: "Access token refreshed" → "WebSocket connected" → "Session resumed"
+   # NOT: "invalid appid or secret" or "Token错误"
    ```
 
 ---
