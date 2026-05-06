@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/favicon.svg">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#007aff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>设置 - 清云</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f5f5f7;--surface:#fff;--card:#f0f0f0;--text:#1d1d1f;--muted:#8e8e93;--accent:#007aff;--border:#e5e5ea;--danger:#ff3b30}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+
+.app{display:flex;height:100vh}
+.sidebar{width:220px;background:var(--surface);display:flex;flex-direction:column;flex-shrink:0;transition:transform .3s;z-index:100;border-right:1px solid var(--border);padding-top:env(safe-area-inset-top,0px)}
+.sidebar-header{padding:18px 16px 12px;border-bottom:1px solid var(--border)}
+.sidebar-header h1{font-size:18px;font-weight:600;color:var(--accent);display:flex;align-items:center;gap:6px}
+.sidebar-nav{flex:1;overflow-y:auto;padding:8px}
+.sidebar-nav .nav-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;border:none;background:transparent;color:var(--text);font-size:14px;cursor:pointer;border-radius:8px;text-align:left;text-decoration:none}
+.sidebar-nav .nav-btn svg{flex-shrink:0}
+.sidebar-nav .nav-btn:hover{background:#f0f0f0}
+.sidebar-nav .nav-btn.active{background:#e8f0fe;color:var(--accent);font-weight:500}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{display:none;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;border-bottom:1px solid var(--border);align-items:center;gap:12px;background:var(--surface)}
+.topbar button{background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:4px}
+.topbar h1{font-size:16px;flex:1;font-weight:500}
+
+/* Settings page */
+.settings-page{flex:1;overflow-y:auto;padding:20px 16px 40px;background:#fff}
+.settings-page h2{font-size:20px;font-weight:600;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.section-group{margin-bottom:24px}
+.section-header{font-size:12px;color:var(--muted);font-weight:600;padding:0 4px 6px;text-transform:uppercase;letter-spacing:.5px}
+.settings-card{background:var(--bg);border-radius:12px;border:1px solid var(--border);overflow:hidden}
+.settings-item{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
+.settings-item:last-child{border-bottom:none}
+.settings-item .label{font-size:15px;color:var(--text);display:flex;align-items:center;gap:10px}
+.settings-item .label svg{flex-shrink:0}
+.settings-item .value{font-size:14px;color:var(--muted)}
+.settings-item .value.danger{color:var(--danger)}
+.settings-item.danger .label{color:var(--danger)}
+.settings-item.clickable{cursor:pointer}
+.settings-item.clickable:active{background:rgba(0,0,0,.04)}
+
+/* Update area */
+.update-status{display:flex;align-items:center;gap:10px}
+.update-checking{color:var(--muted);font-size:13px}
+.update-available{color:var(--danger);font-size:13px;font-weight:600;cursor:pointer}
+.update-latest{color:#34c759;font-size:13px}
+.update-button{padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer}
+.update-button:active{opacity:.8}
+.update-button.download{background:var(--danger)}
+
+/* Logout button */
+.logout-btn{width:100%;padding:14px;background:none;border:none;color:var(--danger);font-size:16px;font-weight:500;cursor:pointer;text-align:center}
+.logout-btn:active{background:rgba(255,59,48,.05)}
+
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:300;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+
+@media(max-width:640px){
+.sidebar{position:fixed;left:0;top:0;height:100%;transform:translateX(-100%)}
+.sidebar.open{transform:translateX(0)}
+.sidebar-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:99;overscroll-behavior:contain;touch-action:pan-x}
+.sidebar-overlay.show{display:block}
+.topbar{display:flex}
+.main{width:100%}
+.settings-page{padding:14px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg> 清云</h1>
+    </div>
+    <div class="sidebar-nav">
+      <a href="/" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> 新对话</a>
+      <a href="/memories" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> 每日记忆</a>
+      <a href="/disk" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> 云盘</a>
+      <a href="/models" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> 模型</a>
+      <a href="/settings" class="nav-btn active"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> 设置</a>
+    </div>
+  </div>
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+  <div class="main">
+    <div class="topbar">
+      <button onclick="toggleSidebar()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+      <h1>设置</h1>
+    </div>
+
+    <div class="settings-page">
+      <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> 设置</h2>
+
+      <!-- Account Section -->
+      <div class="section-group">
+        <div class="section-header">账户</div>
+        <div class="settings-card">
+          <div class="settings-item">
+            <div class="label">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              当前用户
+            </div>
+            <div class="value" id="user-display">-</div>
+          </div>
+          <div class="settings-item clickable danger" onclick="confirmLogout()">
+            <div class="label">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              退出登录
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- About Section -->
+      <div class="section-group">
+        <div class="section-header">关于</div>
+        <div class="settings-card">
+          <div class="settings-item">
+            <div class="label">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg>
+              应用版本
+            </div>
+            <div class="value">v<span id="app-version">-</span></div>
+          </div>
+          <div class="settings-item" style="padding:16px;flex-direction:column;align-items:flex-start;gap:12px">
+            <div class="label" style="font-size:15px">检查更新</div>
+            <div id="update-status" class="update-status" style="width:100%">
+              <span class="update-checking" id="update-text">点击检查最新版本</span>
+              <button class="update-button" id="update-btn" onclick="handleUpdate()">检查更新</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Token Usage -->
+      <div class="section-group">
+        <div class="section-header">DeepSeek 额度</div>
+        <div class="settings-card">
+          <div class="settings-item">
+            <div class="label">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              今日已用
+            </div>
+            <div class="value" id="token-usage-display">加载中...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="margin-top:40px;text-align:center;padding:16px">
+        <p style="font-size:12px;color:var(--muted);line-height:1.6">清云 v<span id="app-version-footer">-</span><br>个人云端助手</p>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── Auth ───
+const TOKEN=localStorage.getItem('auth_token');
+const USER = localStorage.getItem('auth_user');
+if (!TOKEN) window.location.href = '/login';
+function ah() { return {'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'}; }
+
+// ─── Sidebar ───
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('show');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('show');
+}
+// 拦截系统返回手势（Android边缘滑动+物理键），重定向为关闭侧边栏
+(function(){
+  const el = document.getElementById('sidebar-overlay');
+  let startX = 0;
+  el.addEventListener('touchstart', e => { startX = e.touches[0].clientX; closeSidebar(); }, {passive:true});
+  el.addEventListener('touchmove', e => {
+    const dx = e.touches[0].clientX - startX;
+    // 向右滑超过30px → 关闭侧边栏 & 阻止iOS退出应用
+    if (dx > 30) { e.preventDefault(); closeSidebar(); }
+    // 向左滑也阻止穿透，避免触发系统返回
+    else if (dx < -5) e.preventDefault();
+  }, {passive:false});
+})();
+
+// 侧边栏手势由原生层处理（MainActivity.onBackPressed）
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ─── Account ───
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('user-display').textContent = USER || '-';
+});
+
+async function confirmLogout() {
+  if (!confirm('确认退出登录？')) return;
+  try { await fetch('/api/auth/logout', {method:'POST',headers:ah()}); } catch(e) {}
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+  window.location.href = '/login';
+}
+
+// ─── Update ───
+let updateAvailable = false;
+let updateUrl = '';
+
+async function handleUpdate() {
+  const btn = document.getElementById('update-btn');
+  const text = document.getElementById('update-text');
+
+  if (updateAvailable) {
+    // Android 原生 DownloadListener 会拦截并启动下载管理器
+    window.location.href = updateUrl;
+    showToast('下载已开始，请在通知栏查看进度');
+    return;
+  }
+
+  // Check for update
+  btn.textContent = '检查中...';
+  btn.disabled = true;
+  text.textContent = '正在检查...';
+  text.className = 'update-checking';
+
+  try {
+    const r = await fetch('/api/version');
+    const d = await r.json();
+    document.getElementById('app-version').textContent = d.version;
+    document.getElementById('app-version-footer').textContent = d.version;
+
+    const current = d.version;
+    // Compare version strings
+    if (d.latest_version && d.latest_version !== current) {
+      text.textContent = '新版本 ' + d.latest_version + ' 可下载';
+      text.className = 'update-available';
+      text.style.cursor = 'pointer';
+      text.onclick = function(){ 
+        // 试图在系统浏览器打开
+        window.open(updateUrl, '_blank');
+        // 同时也显示链接
+        text.textContent = '新版本 ' + d.latest_version + ' 可下载（点击用浏览器打开）';
+      };
+      btn.textContent = '下载更新';
+      btn.className = 'update-button download';
+      updateAvailable = true;
+      updateUrl = d.apk_url;
+    } else {
+      text.textContent = '已是最新版本 ✓';
+      text.className = 'update-latest';
+      btn.textContent = '重新检查';
+      btn.className = 'update-button';
+      updateAvailable = false;
+    }
+  } catch(e) {
+    text.textContent = '检查失败，请重试';
+    text.className = 'update-checking';
+    btn.textContent = '检查更新';
+    btn.className = 'update-button';
+  }
+  btn.disabled = false;
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+  fetch('/api/version').then(r=>r.json()).then(d => {
+    document.getElementById('app-version').textContent = d.version;
+    document.getElementById('app-version-footer').textContent = d.version;
+    // 自动检查更新
+    if (d.latest_version && d.latest_version !== d.version) {
+      updateAvailable = true;
+      updateUrl = d.apk_url;
+      const text = document.getElementById('update-text');
+      const btn = document.getElementById('update-btn');
+      text.textContent = '新版本 ' + d.latest_version + ' 可下载';
+      text.className = 'update-available';
+      text.style.cursor = 'default';
+      text.onclick = null;
+      btn.textContent = '下载更新';
+      btn.className = 'update-button download';
+    }
+  }).catch(()=>{});
+  // Load token usage
+  fetch('/api/token/usage', {headers:ah()}).then(r=>r.json()).then(d => {
+    const pct = Math.round(d.used / d.limit * 100);
+    document.getElementById('token-usage-display').textContent =
+      d.used.toLocaleString() + ' / ' + d.limit.toLocaleString() + ' (' + pct + '%)';
+  }).catch(() => {
+    document.getElementById('token-usage-display').textContent = '获取失败';
+  });
+});
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

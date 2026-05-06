@@ -1,0 +1,808 @@
+#!/usr/bin/env python3
+"""Build SPA version of chat.html — merge all tab content inline"""
+import re
+
+BASE = '/root/webui/templates'
+
+chat = open(f'{BASE}/chat.html').read()
+
+# === 1. Add all page-specific CSS after the existing </style> ===
+extra_css = """
+/* ─── Settings Page ─── */
+.settings-page{flex:1;overflow-y:auto;padding:20px 16px 40px;background:#fff;display:none}
+.settings-page h2{font-size:20px;font-weight:600;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.settings-page.active{display:block}
+.section-group{margin-bottom:24px}
+.section-header{font-size:12px;color:var(--muted);font-weight:600;padding:0 4px 6px;text-transform:uppercase;letter-spacing:.5px}
+.settings-card{background:var(--bg);border-radius:12px;border:1px solid var(--border);overflow:hidden}
+.settings-item{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
+.settings-item:last-child{border-bottom:none}
+.settings-item .label{font-size:15px;color:var(--text);display:flex;align-items:center;gap:10px}
+.settings-item .label svg{flex-shrink:0}
+.settings-item .value{font-size:14px;color:var(--muted)}
+.settings-item .value.danger{color:var(--danger)}
+.settings-item.danger .label{color:var(--danger)}
+.settings-item.clickable{cursor:pointer}
+.settings-item.clickable:active{background:rgba(0,0,0,.04)}
+.update-status{display:flex;align-items:center;gap:10px}
+.update-checking{color:var(--muted);font-size:13px}
+.update-available{color:var(--danger);font-size:13px;font-weight:600;cursor:pointer}
+.update-latest{color:#34c759;font-size:13px}
+.update-button{padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer}
+.update-button:active{opacity:.8}
+.update-button.download{background:var(--danger)}
+.logout-btn{width:100%;padding:14px;background:none;border:none;color:var(--danger);font-size:16px;font-weight:500;cursor:pointer;text-align:center}
+.logout-btn:active{background:rgba(255,59,48,.05)}
+
+/* ─── Models Page ─── */
+.models-page{flex:1;overflow-y:auto;padding:24px 16px 40px;background:var(--bg);display:none}
+.models-page.active{display:block}
+.page-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding:0 4px}
+.page-hdr h2{font-size:22px;font-weight:700;letter-spacing:-.3px}
+.add-btn{width:36px;height:36px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;font-weight:300;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s}
+.add-btn:active{transform:scale(.88)}
+.provider-card{background:var(--surface);border-radius:14px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);transition:box-shadow .2s}
+.provider-card:active{box-shadow:0 1px 6px rgba(0,0,0,.08)}
+.card-head{padding:16px 16px 0;display:flex;align-items:center;justify-content:space-between}
+.card-left{display:flex;align-items:center;gap:10px}
+.provider-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0}
+.provider-name{font-size:16px;font-weight:600}
+.provider-badge{font-size:11px;color:#34c759;font-weight:500;margin-left:4px}
+.card-actions{display:flex;gap:4px}
+.card-actions button{width:28px;height:28px;border-radius:6px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;transition:opacity .15s}
+.card-actions button:active{opacity:.6}
+.btn-edit{background:#f0f0f0;color:var(--accent)}
+.btn-del{background:#f0f0f0;color:var(--danger)}
+.card-body{padding:10px 16px 12px}
+.card-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:3px 0}
+.card-row svg{flex-shrink:0;opacity:.5}
+.card-row .value{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-tags{padding:0 16px 14px;display:flex;flex-wrap:wrap;gap:6px}
+.model-tag{font-size:12px;padding:5px 10px;background:var(--card);border-radius:7px;color:var(--text);cursor:pointer;transition:all .15s;user-select:none;font-weight:450}
+.model-tag:active{background:var(--accent);color:#fff;transform:scale(.95)}
+.model-tag.active{background:var(--accent);color:#fff;font-weight:500}
+.card-footer{border-top:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:8px}
+.card-footer .edit-link{font-size:13px;color:var(--accent);cursor:pointer;font-weight:500}
+.card-footer .edit-link:active{opacity:.6}
+.card-footer .del-link{font-size:13px;color:var(--danger);cursor:pointer;margin-left:auto}
+.card-footer .del-link:active{opacity:.6}
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.3);z-index:999;align-items:flex-end;justify-content:center}
+.modal.show{display:flex}
+@supports (backdrop-filter:blur(4px)){.modal{background:rgba(0,0,0,.2);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}}
+.modal-box{background:#fff;border-radius:14px 14px 0 0;padding:20px;width:100%;max-width:460px;padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));animation:slideUp .3s cubic-bezier(.4,0,.2,1)}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-handle{width:36px;height:4px;border-radius:2px;background:#d1d1d6;margin:0 auto 16px}
+.modal-box h3{font-size:18px;font-weight:700;margin-bottom:20px;text-align:center}
+.modal-box .field{margin-bottom:14px}
+.modal-box label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500}
+.modal-box input,.modal-box textarea{width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:15px;outline:none;background:var(--bg);transition:border-color .15s}
+.modal-box input:focus,.modal-box textarea:focus{border-color:var(--accent);background:#fff}
+.modal-box textarea{resize:none;min-height:48px}
+.modal-actions{display:flex;gap:10px;margin-top:20px}
+.modal-actions button{flex:1;padding:14px;border-radius:12px;font-size:15px;cursor:pointer;font-weight:600;transition:opacity .15s}
+.modal-actions button:active{opacity:.7}
+.btn-cancel{background:var(--card);border:none;color:var(--text)}
+.btn-confirm{background:var(--accent);border:none;color:#fff}
+.btn-danger{background:#ff3b30;border:none;color:#fff}
+
+/* ─── Memories Page ─── */
+.memories-page{flex:1;display:none;flex-direction:column;overflow-y:auto;padding:20px;background:#fff}
+.memories-page.active{display:flex}
+.memories-page h2{font-size:20px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.memories-list{display:grid;gap:10px}
+.memory-item{padding:16px 20px;background:var(--bg);border-radius:12px;cursor:pointer;border:1px solid var(--border)}
+.memory-item:hover{background:#e8f0fe}
+.memory-item .date{font-size:15px;font-weight:500}
+.memory-item .size{font-size:12px;color:var(--muted);margin-top:4px}
+.memory-content{padding:8px 0;line-height:1.7;font-size:14px}
+.memory-content h1{font-size:20px;margin:16px 0 8px}
+.memory-content h2{font-size:17px;margin:14px 0 8px;color:var(--accent)}
+.memory-content h3{font-size:15px;margin:12px 0 6px}
+.memory-content li{margin:4px 0 4px 16px}
+.memory-content strong{color:var(--accent)}
+.back-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:14px;margin-bottom:12px;padding:4px 0}
+
+/* ─── Disk Page ─── */
+.disk-page{flex:1;display:none;flex-direction:column;background:#fff;min-height:0}
+.disk-page.active{display:flex}
+.disk-header{padding:14px 16px 10px;background:#fff;border-bottom:1px solid var(--border)}
+.disk-server-name{font-size:15px;font-weight:600;display:flex;align-items:center;gap:6px}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.disk-add-btn{padding:4px 14px;background:var(--accent);color:#fff;border:none;border-radius:14px;font-size:12px;cursor:pointer}
+.disk-path{font-size:12px;color:var(--muted);margin-top:6px}
+.disk-toolbar{padding:8px 12px;display:flex;gap:6px;background:#fff;border-bottom:1px solid var(--border)}
+.disk-toolbar button{padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:12px;color:var(--accent);white-space:nowrap}
+.disk-toolbar button:active{background:#f5f5f7}
+.disk-toolbar button:disabled{opacity:.4;pointer-events:none}
+.disk-files{flex:1;overflow-y:auto;padding:4px 0;background:#fff}
+.disk-file-item{padding:10px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f2f2f2}
+.disk-file-icon{font-size:18px;width:24px;text-align:center;flex-shrink:0;cursor:pointer}
+.disk-file-info{flex:1;min-width:0;cursor:pointer}
+.disk-file-name{font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.disk-file-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.disk-del-btn{background:none;border:none;font-size:15px;cursor:pointer;padding:4px 6px;border-radius:6px;flex-shrink:0;opacity:.5}
+.disk-del-btn:hover{opacity:1;background:#fce8e8}
+.disk-empty{padding:60px 16px;text-align:center;color:var(--muted);font-size:14px}
+.upload-picker{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.picker-btn{padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:12px}
+.file-name{font-size:13px;color:var(--muted)}
+.upload-progress{margin:10px 0}
+.progress-bar{height:4px;background:#e5e5ea;border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;background:var(--accent);border-radius:2px;width:30%}
+.progress-text{font-size:11px;color:var(--muted);margin-top:4px}
+"""
+
+# Insert CSS before </style>
+chat = chat.replace('</style>', extra_css + '\n</style>')
+
+# === 2. Convert nav <a href=""> to <button onclick="switchTab()"> ===
+chat = chat.replace(
+    '<a href="/memories" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> 每日记忆</a>',
+    '<button class="nav-btn" onclick="switchTab(\'memories\')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> 每日记忆</button>'
+)
+chat = chat.replace(
+    '<a href="/disk" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> 云盘</a>',
+    '<button class="nav-btn" onclick="switchTab(\'disk\')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> 云盘</button>'
+)
+chat = chat.replace(
+    '<a href="/models" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> 模型</a>',
+    '<button class="nav-btn" onclick="switchTab(\'models\')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> 模型</button>'
+)
+chat = chat.replace(
+    '<a href="/settings" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> 设置</a>',
+    '<button class="nav-btn" onclick="switchTab(\'settings\')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> 设置</button>'
+)
+
+# === 3. Insert tab content sections after the chat-area / before img-preview ===
+tab_sections = """
+    <!-- Tab: Settings -->
+    <div class="settings-page" id="tab-settings">
+      <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> 设置</h2>
+      <div class="section-group">
+        <div class="section-header">账户</div>
+        <div class="settings-card">
+          <div class="settings-item">
+            <div class="label"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> 当前用户</div>
+            <div class="value" id="user-display">-</div>
+          </div>
+          <div class="settings-item clickable danger" onclick="confirmLogout()">
+            <div class="label"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> 退出登录</div>
+          </div>
+        </div>
+      </div>
+      <div class="section-group">
+        <div class="section-header">关于</div>
+        <div class="settings-card">
+          <div class="settings-item">
+            <div class="label"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg> 应用版本</div>
+            <div class="value">v<span id="app-version">-</span></div>
+          </div>
+          <div class="settings-item" style="padding:16px;flex-direction:column;align-items:flex-start;gap:12px">
+            <div class="label" style="font-size:15px">检查更新</div>
+            <div id="update-status" class="update-status" style="width:100%">
+              <span class="update-checking" id="update-text">点击检查最新版本</span>
+              <button class="update-button" id="update-btn" onclick="handleUpdate()">检查更新</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="section-group">
+        <div class="section-header">DeepSeek 额度</div>
+        <div class="settings-card">
+          <div class="settings-item">
+            <div class="label"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> 今日已用</div>
+            <div class="value" id="token-usage-display">加载中...</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:40px;text-align:center;padding:16px">
+        <p style="font-size:12px;color:var(--muted);line-height:1.6">清云 v<span id="app-version-footer">-</span><br>个人云端助手</p>
+      </div>
+    </div>
+
+    <!-- Tab: Models -->
+    <div class="models-page" id="tab-models">
+      <div class="page-hdr">
+        <h2>模型提供商</h2>
+        <button class="add-btn" onclick="showAddModal()">+</button>
+      </div>
+      <div id="provider-list"><div class="empty" style="padding:60px 16px;text-align:center;color:var(--muted);font-size:15px;line-height:1.6">加载中...</div></div>
+    </div>
+
+    <!-- Tab: Memories -->
+    <div class="memories-page" id="tab-memories">
+      <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> 每日记忆</h2>
+      <div class="memories-list" id="mlist">
+        <div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>
+      </div>
+    </div>
+
+    <!-- Tab: Disk -->
+    <div class="disk-page" id="tab-disk">
+      <div class="disk-header">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="disk-server-name" id="disk-server-name">不在线<span class="status-dot" id="status-dot"></span></span>
+        </div>
+      </div>
+      <div class="disk-toolbar">
+        <button id="btn-back" onclick="diskGoBack()">⬆ 上级</button>
+        <button onclick="diskUpload()">⬆ 上传</button>
+        <button onclick="diskMkdir()">📁 新建</button>
+        <button onclick="diskRefresh()">🔄 刷新</button>
+      </div>
+      <div class="disk-files" id="disk-files">
+        <div class="disk-empty">点击「连接」输入服务器信息</div>
+      </div>
+    </div>
+"""
+
+# Insert tab sections right before the img-preview div
+marker = '<div class="img-preview" id="img-preview">'
+chat = chat.replace(marker, tab_sections + '\n    ' + marker)
+
+# === 4. Add modals for models and disk ===
+# Models modal
+models_modal = """
+<!-- Provider Modal -->
+<div class="modal" id="provider-modal">
+  <div class="modal-box">
+    <div class="modal-handle"></div>
+    <h3 id="modal-title">添加模型</h3>
+    <div class="field"><label>名称</label><input type="text" id="f-name" placeholder="如 DeepSeek"></div>
+    <div class="field"><label>接口地址</label><input type="text" id="f-base" placeholder="https://api.deepseek.com/v1"></div>
+    <div class="field"><label>API Key</label><input type="text" id="f-key" placeholder="sk-xxx"></div>
+    <div class="field"><label>模型名（多个用逗号分隔）</label><textarea id="f-models" placeholder="deepseek-chat, deepseek-reasoner" rows="2"></textarea></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('provider-modal')">取消</button>
+      <button class="btn-confirm" onclick="saveProvider()">保存</button>
+    </div>
+  </div>
+</div>
+"""
+
+# Disk modals
+disk_modals = """
+<!-- Disk Connect Modal -->
+<div class="modal" id="srv-modal">
+  <div class="modal-box">
+    <h3>连接服务器</h3>
+    <div class="field"><label>主机地址</label><input type="text" id="srv-host" value="81.70.229.222"></div>
+    <div class="field"><label>端口</label><input type="number" id="srv-port" value="22"></div>
+    <div class="field"><label>用户名</label><input type="text" id="srv-user" value="ubuntu"></div>
+    <div class="field"><label>密码</label><input type="password" id="srv-pass" placeholder="密码"></div>
+    <div class="field"><label>根路径（可选，锁死在此目录）</label><input type="text" id="srv-root" placeholder="/home/ubuntu/113646"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('srv-modal')">取消</button>
+      <button class="btn-confirm" onclick="connectServer()">连接</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal" id="upload-modal">
+  <div class="modal-box">
+    <h3>上传文件</h3>
+    <div class="upload-picker">
+      <button class="picker-btn" onclick="document.getElementById('upload-file').click()">选择文件</button>
+      <span class="file-name" id="upload-file-name">未选择任何文件</span>
+    </div>
+    <input type="file" id="upload-file" style="display:none" onchange="document.getElementById('upload-file-name').textContent=this.files[0]?.name||'未选择任何文件'">
+    <div class="upload-progress" id="upload-progress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+      <div class="progress-text" id="progress-text">正在传输到远程服务器...</div>
+    </div>
+    <div class="modal-actions" id="upload-actions">
+      <button class="btn-cancel" onclick="closeModal('upload-modal')">取消</button>
+      <button class="btn-confirm" onclick="doUpload()">上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mkdir Modal -->
+<div class="modal" id="mkdir-modal">
+  <div class="modal-box">
+    <h3>新建文件夹</h3>
+    <input type="text" id="mkdir-name" placeholder="文件夹名称">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('mkdir-modal')">取消</button>
+      <button class="btn-confirm" onclick="doMkdir()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div class="modal" id="del-modal">
+  <div class="modal-box">
+    <h3 id="del-title">确认删除</h3>
+    <p id="del-msg" style="font-size:14px;color:var(--muted);margin-bottom:16px"></p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('del-modal')">取消</button>
+      <button class="btn-danger" onclick="doDelete()">删除</button>
+    </div>
+  </div>
+</div>
+"""
+
+# Insert modals before </body>
+chat = chat.replace('</body>', models_modal + disk_modals + '\n</body>')
+
+# === 5. Add SPA routing + merged JS before </body> (after the existing script) ===
+spa_js = """
+<script>
+// ─── SPA Tab Routing ───
+let tabInited = {};
+let currentTab = 'chat';
+
+function switchTab(tab) {
+  if (currentTab === tab) return;
+  // Hide all tabs
+  document.getElementById('chat-area').style.display = 'none';
+  document.getElementById('img-preview').style.display = 'none';
+  document.querySelector('.input-bar').style.display = 'none';
+  ['settings','models','memories','disk'].forEach(t => {
+    const el = document.getElementById('tab-'+t);
+    if (el) el.classList.remove('active');
+  });
+  // Update nav active
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.querySelector(`.nav-btn[onclick*="'${tab}'"]`);
+  if (btn) btn.classList.add('active');
+  // Show selected
+  if (tab === 'chat' || tab === 'newchat') {
+    document.getElementById('chat-area').style.display = 'flex';
+    document.getElementById('img-preview').style.display = '';
+    document.querySelector('.input-bar').style.display = 'flex';
+    currentTab = 'chat';
+    // Update topbar title
+    const topH1 = document.querySelector('.topbar h1');
+    if (topH1) topH1.textContent = '清云';
+    closeSidebar();
+    return;
+  }
+  const el = document.getElementById('tab-'+tab);
+  if (el) el.classList.add('active');
+  const topH1 = document.querySelector('.topbar h1');
+  const titles = {settings:'设置',models:'模型',memories:'每日记忆',disk:'云盘'};
+  if (topH1) topH1.textContent = titles[tab] || tab;
+  // Lazy init
+  if (!tabInited[tab]) {
+    tabInited[tab] = true;
+    if (tab === 'settings') initSettings();
+    else if (tab === 'models') loadProviders();
+    else if (tab === 'memories') loadMemories();
+    else if (tab === 'disk') initDisk();
+  }
+  currentTab = tab;
+  closeSidebar();
+}
+
+// ─── Settings Tab ───
+function initSettings() {
+  document.getElementById('user-display').textContent = USER || '-';
+  fetch('/api/version').then(r=>r.json()).then(d => {
+    document.getElementById('app-version').textContent = d.version;
+    document.getElementById('app-version-footer').textContent = d.version;
+    if (d.latest_version && d.latest_version !== d.version) {
+      updateAvailable = true;
+      updateUrl = d.apk_url;
+      const text = document.getElementById('update-text');
+      const btn = document.getElementById('update-btn');
+      text.textContent = '新版本 ' + d.latest_version + ' 可下载';
+      text.className = 'update-available';
+      btn.textContent = '下载更新';
+      btn.className = 'update-button download';
+    }
+  }).catch(()=>{});
+  fetch('/api/token/usage', {headers:apiHeaders()}).then(r=>r.json()).then(d => {
+    const pct = Math.round(d.used / d.limit * 100);
+    document.getElementById('token-usage-display').textContent =
+      d.used.toLocaleString() + ' / ' + d.limit.toLocaleString() + ' (' + pct + '%)';
+  }).catch(() => {
+    document.getElementById('token-usage-display').textContent = '获取失败';
+  });
+}
+
+let updateAvailable = false;
+let updateUrl = '';
+
+async function confirmLogout() {
+  if (!confirm('确认退出登录？')) return;
+  try { await fetch('/api/auth/logout', {method:'POST',headers:apiHeaders()}); } catch(e) {}
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+  window.location.href = '/login';
+}
+
+async function handleUpdate() {
+  const btn = document.getElementById('update-btn');
+  const text = document.getElementById('update-text');
+  if (updateAvailable) {
+    window.location.href = updateUrl;
+    showToast('下载已开始，请在通知栏查看进度');
+    return;
+  }
+  btn.textContent = '检查中...';
+  btn.disabled = true;
+  text.textContent = '正在检查...';
+  text.className = 'update-checking';
+  try {
+    const r = await fetch('/api/version');
+    const d = await r.json();
+    document.getElementById('app-version').textContent = d.version;
+    document.getElementById('app-version-footer').textContent = d.version;
+    if (d.latest_version && d.latest_version !== d.version) {
+      text.textContent = '新版本 ' + d.latest_version + ' 可下载';
+      text.className = 'update-available';
+      btn.textContent = '下载更新';
+      btn.className = 'update-button download';
+      updateAvailable = true;
+      updateUrl = d.apk_url;
+    } else {
+      text.textContent = '已是最新版本 \\u2713';
+      text.className = 'update-latest';
+      btn.textContent = '重新检查';
+      btn.className = 'update-button';
+      updateAvailable = false;
+    }
+  } catch(e) {
+    text.textContent = '检查失败，请重试';
+    text.className = 'update-checking';
+    btn.textContent = '检查更新';
+    btn.className = 'update-button';
+  }
+  btn.disabled = false;
+}
+
+// ─── Models Tab ───
+let editingId = null;
+const providerColors = {
+  'deepseek': '#4F6EF7', 'openai': '#10A37F', 'openrouter': '#7C3AED',
+  'xiaomi': '#FF6900', 'mimo': '#FF6900', 'anthropic': '#D4A574',
+  'google': '#4285F4', 'gemini': '#4285F4', 'groq': '#F55036',
+  'mistral': '#FD8C00', 'cohere': '#39594D', 'default': '#007aff'
+};
+function getProviderColor(name) {
+  const n = (name||'').toLowerCase();
+  for (const [k,v] of Object.entries(providerColors)) { if (n.includes(k)) return v; }
+  return '#007aff';
+}
+function getInitials(name) { return (name||'').substring(0,2).toUpperCase() || 'AI'; }
+function showModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+async function loadProviders() {
+  const el = document.getElementById('provider-list');
+  const savedModel = localStorage.getItem('chatModel') || '';
+  try {
+    const resp = await fetch('/api/providers', {headers:apiHeaders()});
+    const providers = await resp.json();
+    if (!providers.length) {
+      el.innerHTML = '<div class="empty" style="padding:60px 16px;text-align:center;color:var(--muted);font-size:15px;line-height:1.6">暂无模型配置<br>点击右上角 + 添加</div>';
+      return;
+    }
+    el.innerHTML = providers.map(p => {
+      const color = getProviderColor(p.name);
+      const activeModel = p.models && p.models.some(m => m === savedModel);
+      return '<div class="provider-card" style="'+(activeModel?'box-shadow:0 0 0 1.5px '+color:'')+'">'+
+        '<div class="card-head"><div class="card-left"><div class="provider-icon" style="background:'+color+'">'+getInitials(p.name)+'</div><div><div class="provider-name">'+p.name+'</div></div>'+(activeModel?'<span class="provider-badge">使用中</span>':'')+'</div>'+
+        '<div class="card-actions"><button class="btn-edit" onclick="editProvider(\\''+p.id+'\\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>'+
+        '<button class="btn-del" onclick="deleteProvider(\\''+p.id+'\\')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div></div>'+
+        '<div class="card-body"><div class="card-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><span class="value">'+p.base_url+'</span></div>'+
+        '<div class="card-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="value">'+p.api_key.substring(0,8)+'...'+p.api_key.slice(-4)+'</span></div></div>'+
+        '<div class="card-tags">'+(p.models||[]).map(m => '<span class="model-tag'+(m===savedModel?' active':'')+'" onclick="selectModel(\\''+m+'\\',\\''+p.id+'\\')">'+m+'</span>').join('')+'</div></div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<div class="empty" style="padding:60px 16px;text-align:center;color:#e55;font-size:15px">加载失败</div>'; }
+}
+
+function showAddModal() {
+  editingId = null;
+  document.getElementById('modal-title').textContent = '添加模型';
+  document.getElementById('f-name').value = '';
+  document.getElementById('f-base').value = '';
+  document.getElementById('f-key').value = '';
+  document.getElementById('f-models').value = '';
+  showModal('provider-modal');
+}
+
+function editProvider(id) {
+  editingId = id;
+  document.getElementById('modal-title').textContent = '编辑模型';
+  fetch('/api/providers', {headers:apiHeaders()}).then(r=>r.json()).then(providers => {
+    const p = providers.find(x => x.id === id);
+    if (!p) return;
+    document.getElementById('f-name').value = p.name;
+    document.getElementById('f-base').value = p.base_url;
+    document.getElementById('f-key').value = p.api_key;
+    document.getElementById('f-models').value = (p.models||[]).join(', ');
+    showModal('provider-modal');
+  });
+}
+
+async function saveProvider() {
+  const name = document.getElementById('f-name').value.trim();
+  const base_url = document.getElementById('f-base').value.trim();
+  const api_key = document.getElementById('f-key').value.trim();
+  const modelsStr = document.getElementById('f-models').value.trim();
+  if (!name || !base_url || !api_key) { showToast('名称、接口地址、API Key 必填'); return; }
+  const models = modelsStr ? modelsStr.split(',').map(s => s.trim()).filter(Boolean) : [name];
+  const body = {name, base_url, api_key, models};
+  try {
+    let resp;
+    if (editingId) {
+      resp = await fetch('/api/providers/' + editingId, { method:'PUT', headers:apiHeaders(), body: JSON.stringify(body) });
+    } else {
+      resp = await fetch('/api/providers', { method:'POST', headers:apiHeaders(), body: JSON.stringify(body) });
+    }
+    const data = await resp.json();
+    if (!data.ok) { showToast(data.error || '保存失败'); return; }
+    closeModal('provider-modal');
+    showToast(editingId ? '已更新 \\u2713' : '已添加 \\u2713');
+    loadProviders();
+  } catch(e) { showToast('保存失败: ' + e.message); }
+}
+
+async function deleteProvider(id) {
+  if (!confirm('确认删除此模型配置？')) return;
+  try {
+    await fetch('/api/providers/' + id, { method:'DELETE', headers:apiHeaders() });
+    showToast('已删除');
+    loadProviders();
+  } catch(e) { showToast('删除失败'); }
+}
+
+function selectModel(model, providerId) {
+  localStorage.setItem('chatModel', model);
+  showToast('已切换: ' + model);
+  loadProviders();
+}
+
+// ─── Memories Tab ───
+function loadMemories() {
+  const el = document.getElementById('mlist');
+  fetch('/api/memories', {headers:apiHeaders()}).then(r=>r.json()).then(data => {
+    if (!data || !data.length) {
+      el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">暂无记忆</div>';
+      return;
+    }
+    el.innerHTML = data.map(m =>
+      '<div class="memory-item" onclick="viewMemory(\\''+m.date+'\\')"><div class="date">'+m.title+'</div><div class="size">'+m.size+' 字节</div></div>'
+    ).join('');
+  }).catch(() => {
+    el.innerHTML = '<div style="text-align:center;color:#e55;padding:40px">加载失败</div>';
+  });
+}
+
+function viewMemory(date) {
+  const el = document.getElementById('mlist');
+  el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+  fetch('/api/memories/'+date, {headers:apiHeaders()}).then(r=>r.json()).then(d => {
+    const c = d.content || '';
+    const html = c
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/^### (.+)$/gm,'<h3>$1</h3>').replace(/^## (.+)$/gm,'<h2>$1</h2>').replace(/^# (.+)$/gm,'<h1>$1</h1>')
+      .replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>').replace(/\\*(.+?)\\*/g,'<em>$1</em>')
+      .replace(/^- (.+)$/gm,'<li>$1</li>').replace(/\\n\\n/g,'</p><p style="line-height:1.7;margin:8px 0">').replace(/\\n/g,'<br>');
+    el.innerHTML = '<button class="back-btn" onclick="loadMemories()">\\u2190 返回列表</button><div class="memory-content">'+html+'</div>';
+  }).catch(() => {
+    el.innerHTML = '<div style="text-align:center;color:#e55;padding:40px">加载失败</div>';
+  });
+}
+
+// ─── Disk Tab ───
+let diskConnId = null;
+let diskPath = '/';
+let diskRoot = null;
+let pendingDeletePath = null;
+
+function showServerModal() { showModal('srv-modal'); }
+
+async function autoConnect() {
+  const saved = localStorage.getItem('diskServer');
+  if (!saved) return;
+  try {
+    const cfg = JSON.parse(saved);
+    if (!cfg.host) return;
+    showToast('正在连接...');
+    fetch('/api/disk/connect', {
+      method:'POST', headers:apiHeaders(),
+      body: JSON.stringify({...cfg, root_path: cfg.root_path || undefined})
+    }).then(r=>r.json()).then(data => {
+      if (!data.ok) { return; }
+      diskConnId = data.conn_id;
+      diskRoot = data.root_path || null;
+      document.getElementById('disk-server-name').innerHTML = '在线<span class="status-dot" id="status-dot"></span>';
+      document.getElementById('status-dot').style.background = '#34c759';
+      diskPath = diskRoot || '/';
+      diskList(diskPath);
+    }).catch(() => {});
+  } catch(e) {}
+}
+
+function initDisk() {
+  // Load saved config from server
+  fetch('/api/disk/config', {headers:apiHeaders()}).then(r=>r.ok&&r.json()).then(cfg => {
+    if (cfg?.host && cfg?.root_path) localStorage.setItem('diskServer', JSON.stringify(cfg));
+  }).catch(() => {});
+  autoConnect();
+}
+
+async function connectServer() {
+  const host = document.getElementById('srv-host').value.trim();
+  const port = parseInt(document.getElementById('srv-port').value) || 22;
+  const username = document.getElementById('srv-user').value.trim();
+  const password = document.getElementById('srv-pass').value;
+  let rootPath = document.getElementById('srv-root').value.trim();
+  if (!host || !username) { showToast('请输入主机地址和用户名'); return; }
+  closeModal('srv-modal');
+  showToast('连接中...');
+  try {
+    const resp = await fetch('/api/disk/connect', {
+      method:'POST', headers:apiHeaders(),
+      body: JSON.stringify({host, port, username, password, root_path: rootPath || undefined})
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('连接失败: ' + (data.error||'')); return; }
+    diskConnId = data.conn_id;
+    diskRoot = data.root_path || null;
+    document.getElementById('disk-server-name').innerHTML = '在线<span class="status-dot" id="status-dot"></span>';
+    document.getElementById('status-dot').style.background = '#34c759';
+    showToast('已连接 \\u2713');
+    diskPath = diskRoot || '/';
+    diskList(diskPath);
+    localStorage.setItem('diskServer', JSON.stringify({host, port, username, password, root_path: rootPath || ''}));
+  } catch(e) { showToast('连接失败: ' + e.message); }
+}
+
+async function diskList(path) {
+  if (!diskConnId) return;
+  diskPath = path;
+  const el = document.getElementById('disk-files');
+  el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">加载中...</div>';
+  try {
+    const resp = await fetch('/api/disk/'+diskConnId+'/list?path='+encodeURIComponent(path));
+    const data = await resp.json();
+    if (!data.ok) { el.innerHTML = '<div class="disk-empty">'+data.error+'</div>'; return; }
+    if (!data.entries.length) { el.innerHTML = '<div class="disk-empty">空目录</div>'; return; }
+    el.innerHTML = data.entries.map(e => {
+      const icon = e.is_dir ? '📁' : getFileIcon(e.name);
+      const size = e.is_dir ? '' : formatSize(e.size);
+      const mtime = e.mtime ? new Date(e.mtime*1000).toLocaleString() : '';
+      const fullPath = (path === '/' ? '/' : path + '/') + e.name;
+      return '<div class="disk-file-item"><div class="disk-file-icon" onclick="'+(e.is_dir?'diskList(\\''+fullPath+'\\')':'downloadFile(\\''+fullPath+'\\')')+'">'+icon+'</div><div class="disk-file-info" onclick="'+(e.is_dir?'diskList(\\''+fullPath+'\\')':'downloadFile(\\''+fullPath+'\\')')+'"><div class="disk-file-name">'+e.name+'</div><div class="disk-file-meta">'+size+' '+mtime+'</div></div><button class="disk-del-btn" onclick="diskDelete(\\''+fullPath+'\\',\\''+e.name+'\\',event)">🗑</button></div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<div class="disk-empty">加载失败: ' + e.message + '</div>'; }
+}
+
+function getFileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) return '🖼';
+  if (['mp4','avi','mkv','mov','wmv'].includes(ext)) return '🎬';
+  if (['mp3','wav','flac','aac','ogg'].includes(ext)) return '🎵';
+  if (['zip','rar','7z','tar','gz'].includes(ext)) return '🗜';
+  if (['py','js','html','css','json','xml','md','txt','sh'].includes(ext)) return '📄';
+  if (['pdf'].includes(ext)) return '📕';
+  if (['doc','docx'].includes(ext)) return '📘';
+  if (['xls','xlsx','csv'].includes(ext)) return '📊';
+  return '📄';
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B','KB','MB','GB'];
+  let i = 0; let size = bytes;
+  while (size >= 1024 && i < units.length-1) { size /= 1024; i++; }
+  return size.toFixed(1) + ' ' + units[i];
+}
+
+function diskGoBack() {
+  if (!diskPath || diskPath === '/') return;
+  if (diskRoot && diskPath === diskRoot) { showToast('🔒 已锁定在根路径'); return; }
+  const parent = diskPath.substring(0, diskPath.lastIndexOf('/')) || '/';
+  if (diskRoot && !parent.startsWith(diskRoot)) { showToast('🔒 已锁定在根路径'); return; }
+  diskList(parent);
+}
+
+function diskRefresh() { diskList(diskPath); }
+
+function diskUpload() {
+  if (!diskConnId) { showToast('请先连接服务器'); return; }
+  document.getElementById('upload-file-name').textContent = '未选择任何文件';
+  document.getElementById('upload-progress').style.display = 'none';
+  document.getElementById('upload-actions').style.display = '';
+  showModal('upload-modal');
+}
+
+async function doUpload() {
+  const fileInput = document.getElementById('upload-file');
+  const file = fileInput.files[0];
+  if (!file) { showToast('请选择文件'); return; }
+  document.getElementById('upload-actions').style.display = 'none';
+  document.getElementById('upload-progress').style.display = '';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('path', diskPath);
+  try {
+    const resp = await fetch('/api/disk/'+diskConnId+'/upload', { method:'POST', body: formData });
+    const data = await resp.json();
+    if (!data.ok) { showToast('上传失败: ' + (data.error||'')); } else { showToast('上传成功 \\u2713'); }
+  } catch(e) { showToast('上传失败: ' + e.message); }
+  closeModal('upload-modal');
+  fileInput.value = '';
+  diskList(diskPath);
+}
+
+async function downloadFile(path) {
+  if (!diskConnId) return;
+  try {
+    const resp = await fetch('/api/disk/'+diskConnId+'/download?path='+encodeURIComponent(path));
+    const data = await resp.json();
+    if (!data.ok) { showToast('下载失败: ' + (data.error||'')); return; }
+    window.location.href = data.url;
+    showToast('正在下载: ' + data.filename);
+  } catch(e) { showToast('下载失败: ' + e.message); }
+}
+
+function diskMkdir() {
+  if (!diskConnId) { showToast('请先连接服务器'); return; }
+  document.getElementById('mkdir-name').value = '';
+  showModal('mkdir-modal');
+}
+
+async function doMkdir() {
+  const name = document.getElementById('mkdir-name').value.trim();
+  if (!name) { showToast('请输入文件夹名称'); return; }
+  const path = (diskPath === '/' ? '/' : diskPath + '/') + name;
+  closeModal('mkdir-modal');
+  try {
+    const resp = await fetch('/api/disk/'+diskConnId+'/mkdir', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path})
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('创建失败: ' + (data.error||'')); return; }
+    showToast('创建成功 \\u2713');
+    diskList(diskPath);
+  } catch(e) { showToast('创建失败: ' + e.message); }
+}
+
+function diskDelete(path, name, event) {
+  if (event) event.stopPropagation();
+  if (!diskConnId) { showToast('请先连接服务器'); return; }
+  pendingDeletePath = path;
+  document.getElementById('del-title').textContent = '确认删除';
+  document.getElementById('del-msg').textContent = '确定要删除「' + name + '」吗？此操作不可撤销。';
+  showModal('del-modal');
+}
+
+async function doDelete() {
+  if (!pendingDeletePath) return;
+  closeModal('del-modal');
+  try {
+    const resp = await fetch('/api/disk/'+diskConnId+'/delete', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path: pendingDeletePath})
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('删除失败: ' + (data.error||'')); return; }
+    showToast('已删除 \\u2713');
+    diskList(diskPath);
+  } catch(e) { showToast('删除失败: ' + e.message); }
+  pendingDeletePath = null;
+}
+</script>
+"""
+
+# Insert SPA JS before </body>
+chat = chat.replace('</body>', spa_js + '\n</body>')
+
+# === 6. Update the DOMContentLoaded handler to not auto-connect twice ===
+chat = chat.replace(
+    "document.addEventListener('DOMContentLoaded', () => {\n  loadChats().catch(() => {});\n  // Try loading saved disk config from server\n  fetch('/api/disk/config', {headers:apiHeaders()}).then(r=>r.ok&&r.json()).then(cfg => {\n    if (cfg?.host && cfg?.root_path) localStorage.setItem('diskServer', JSON.stringify(cfg));\n  }).catch(() => {});\n  autoConnect();\n});",
+    "document.addEventListener('DOMContentLoaded', () => {\n  loadChats().catch(() => {});\n});"
+)
+
+with open(f'{BASE}/chat.html', 'w') as f:
+    f.write(chat)
+
+print(f"Written {len(chat)} bytes to chat.html")
+print("Done! SPA merge complete.")

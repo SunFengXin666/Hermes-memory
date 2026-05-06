@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/favicon.svg">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#007aff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>清云 - 登录</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f5f5f7;--surface:#fff;--card:#f0f0f0;--text:#1d1d1f;--muted:#8e8e93;--accent:#007aff;--border:#e5e5ea}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:var(--surface);border-radius:20px;padding:32px 28px;width:100%;max-width:380px;box-shadow:0 4px 24px rgba(0,0,0,.06)}
+.logo{text-align:center;margin-bottom:28px}
+.logo svg{display:inline-block}
+.logo h1{font-size:24px;font-weight:700;color:var(--text);margin-top:8px}
+.logo p{font-size:14px;color:var(--muted);margin-top:4px}
+.tabs{display:flex;margin-bottom:20px;background:var(--bg);border-radius:10px;padding:3px}
+.tab{flex:1;text-align:center;padding:8px;border-radius:8px;font-size:14px;cursor:pointer;transition:all .2s;border:none;background:transparent;color:var(--muted);font-weight:500}
+.tab.active{background:var(--surface);color:var(--accent);font-weight:600;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:500}
+.field input{width:100%;padding:12px 16px;border:1.5px solid var(--border);border-radius:12px;font-size:16px;outline:none;background:var(--bg);transition:all .2s}
+.field input:focus{border-color:var(--accent);background:var(--surface)}
+.btn-primary{width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.btn-primary:active{opacity:.8}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.error{color:#e55;font-size:13px;text-align:center;margin:8px 0;display:none}
+.loading{display:none;text-align:center;padding:20px;color:var(--muted);font-size:14px}
+.loading .spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;margin-right:8px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.cl-input{display:none}
+</style>
+</head>
+<body>
+<div class="card" id="login-card">
+  <div class="logo">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg>
+    <h1>清云</h1>
+    <p>智能助手 · 你的专属 AI</p>
+  </div>
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('login')">登录</button>
+    <button class="tab" onclick="switchTab('register')">注册</button>
+  </div>
+  <form id="login-form" onsubmit="doLogin(event)">
+    <div class="field"><label>用户名</label><input type="text" id="login-user" placeholder="输入用户名" autocomplete="username"></div>
+    <div class="field"><label>密码</label><input type="password" id="login-pass" placeholder="输入密码" autocomplete="current-password"></div>
+    <div class="error" id="login-error"></div>
+    <button class="btn-primary" type="submit">登录</button>
+  </form>
+  <form id="register-form" style="display:none" onsubmit="doRegister(event)">
+    <div class="field"><label>用户名</label><input type="text" id="reg-user" placeholder="至少2个字符" autocomplete="username"></div>
+    <div class="field"><label>密码</label><input type="password" id="reg-pass" placeholder="至少4个字符" autocomplete="new-password"></div>
+    <div class="error" id="reg-error"></div>
+    <button class="btn-primary" type="submit">注册</button>
+  </form>
+  <div class="loading" id="loading-screen"><span class="spinner"></span> 正在登录...</div>
+</div>
+<script>
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('login-form').style.display = tab === 'login' ? 'block' : 'none';
+  document.getElementById('register-form').style.display = tab === 'register' ? 'block' : 'none';
+  document.querySelectorAll('.error').forEach(e => e.style.display = 'none');
+}
+
+async function doLogin(e) {
+  e.preventDefault();
+  const user = document.getElementById('login-user').value.trim();
+  const pass = document.getElementById('login-pass').value.trim();
+  if (!user || !pass) { showError('login-error', '请填写用户名和密码'); return; }
+  showLoading(true);
+  try {
+    const resp = await fetch('/api/auth/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,password:pass})});
+    const data = await resp.json();
+    if (!data.ok) { showLoading(false); showError('login-error', data.error); return; }
+    localStorage.setItem('auth_token', data.token);
+    localStorage.setItem('auth_user', data.username);
+    window.location.href = '/';
+  } catch(e) { showLoading(false); showError('login-error', '网络错误'); }
+}
+
+async function doRegister(e) {
+  e.preventDefault();
+  const user = document.getElementById('reg-user').value.trim();
+  const pass = document.getElementById('reg-pass').value.trim();
+  if (!user || !pass) { showError('reg-error', '请填写用户名和密码'); return; }
+  showLoading(true);
+  try {
+    const resp = await fetch('/api/auth/register', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,password:pass})});
+    const data = await resp.json();
+    if (!data.ok) { showLoading(false); showError('reg-error', data.error); return; }
+    // Auto-login after register
+    const loginResp = await fetch('/api/auth/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,password:pass})});
+    const loginData = await loginResp.json();
+    if (loginData.ok) {
+      localStorage.setItem('auth_token', loginData.token);
+      localStorage.setItem('auth_user', loginData.username);
+      window.location.href = '/';
+    }
+  } catch(e) { showLoading(false); showError('reg-error', '网络错误'); }
+}
+
+function showError(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function showLoading(v) {
+  document.getElementById('login-card').style.display = v ? 'none' : 'block';
+  document.getElementById('loading-screen').style.display = v ? 'block' : 'none';
+}
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+	"appId": "com.qingyun.app",
+	"appName": "清云",
+	"webDir": "www",
+	"server": {
+		"url": "http://49.232.224.90:8080",
+		"cleartext": true,
+		"allowNavigation": [
+			"49.232.224.90:8080"
+		]
+	},
+	"android": {
+		"allowMixedContent": true,
+		"backgroundColor": "#ffffff"
+	},
+	"plugins": {
+		"SplashScreen": {
+			"launchShowDuration": 2000,
+			"backgroundColor": "#ffffff",
+			"androidSplashResourceName": "splash",
+			"androidScaleType": "FIT_CENTER",
+			"showSpinner": false,
+			"splashFullScreen": true,
+			"splashImmersive": true
+		}
+	}
+}

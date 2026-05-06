@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="apple-touch-icon" href="/static/favicon.svg">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#007aff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>每日记忆 - 清云</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f5f5f7;--surface:#fff;--card:#f0f0f0;--text:#1d1d1f;--muted:#8e8e93;--accent:#007aff;--border:#e5e5ea}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+
+.app{display:flex;height:100vh}
+.sidebar{width:220px;background:var(--surface);display:flex;flex-direction:column;flex-shrink:0;transition:transform .3s;z-index:100;border-right:1px solid var(--border);padding-top:env(safe-area-inset-top,0px)}
+.sidebar-header{padding:18px 16px 12px;border-bottom:1px solid var(--border)}
+.sidebar-header h1{font-size:18px;font-weight:600;color:var(--accent)}
+.sidebar-nav{flex:1;overflow-y:auto;padding:8px}
+.sidebar-nav .nav-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;border:none;background:transparent;color:var(--text);font-size:14px;cursor:pointer;border-radius:8px;text-align:left;text-decoration:none}
+.sidebar-nav .nav-btn svg{flex-shrink:0}
+.sidebar-nav .nav-btn:hover{background:#f0f0f0}
+.sidebar-nav .nav-btn.active{background:#e8f0fe;color:var(--accent);font-weight:500}
+.sidebar-footer{padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.sidebar-footer .user{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.sidebar-footer .logout-btn{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px}
+.sidebar-footer .logout-btn:hover{background:#f5f5f5;color:#e55}
+.sidebar-ver{font-size:10px;color:var(--muted);padding:4px 14px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.sidebar-ver .ver-tag{opacity:.6}
+.sidebar-ver .update-link{color:var(--accent);cursor:pointer;font-size:10px;text-decoration:none}
+.sidebar-ver .update-link:hover{text-decoration:underline}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{display:none;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;border-bottom:1px solid var(--border);align-items:center;gap:12px;background:var(--surface)}
+.topbar button{background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:4px}
+.topbar h1{font-size:16px;flex:1;font-weight:500}
+
+.memories-page{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:20px;background:#fff}
+.memories-page h2{font-size:20px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.memories-list{display:grid;gap:10px}
+.memory-item{padding:16px 20px;background:var(--bg);border-radius:12px;cursor:pointer;border:1px solid var(--border)}
+.memory-item:hover{background:#e8f0fe}
+.memory-item .date{font-size:15px;font-weight:500}
+.memory-item .size{font-size:12px;color:var(--muted);margin-top:4px}
+.memory-content{padding:8px 0;line-height:1.7;font-size:14px}
+.memory-content h1{font-size:20px;margin:16px 0 8px}
+.memory-content h2{font-size:17px;margin:14px 0 8px;color:var(--accent)}
+.memory-content h3{font-size:15px;margin:12px 0 6px}
+.memory-content li{margin:4px 0 4px 16px}
+.memory-content strong{color:var(--accent)}
+.back-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:14px;margin-bottom:12px;padding:4px 0}
+
+@media(max-width:640px){
+.sidebar{position:fixed;left:0;top:0;height:100%;transform:translateX(-100%)}
+.sidebar.open{transform:translateX(0)}
+.sidebar-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:99;overscroll-behavior:contain;touch-action:pan-x}
+.sidebar-overlay.show{display:block}
+.topbar{display:flex}
+.main{width:100%}
+.memories-page{padding:14px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg> 清云</h1>
+    </div>
+    <div class="sidebar-nav">
+      <a href="/" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> 新对话</a>
+      <a href="/memories" class="nav-btn active"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> 每日记忆</a>
+      <a href="/disk" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> 云盘</a>
+      <a href="/models" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> 模型</a>
+      <a href="/settings" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> 设置</a>
+    </div>
+  </div>
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+  <div class="main">
+    <div class="topbar">
+      <button onclick="toggleSidebar()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+      <h1>每日记忆</h1>
+    </div>
+
+    <div class="memories-page" id="mpage">
+      <div class="memories-list" id="mlist">
+        <div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Auth ───
+const TOKEN = localStorage.getItem('auth_token');
+const USER = localStorage.getItem('auth_user');
+if (!TOKEN) window.location.href = '/login';
+function ah() { return {'Authorization':'Bearer '+TOKEN,'Content-Type':'application/json'}; }
+
+async function logout() {
+  try { await fetch('/api/auth/logout', {method:'POST',headers:ah()}); } catch(e) {}
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+  window.location.href = '/login';
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('show');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('show');
+}
+// 拦截系统返回手势（Android边缘滑动+物理键），重定向为关闭侧边栏
+(function(){
+  const el = document.getElementById('sidebar-overlay');
+  let startX = 0;
+  el.addEventListener('touchstart', e => { startX = e.touches[0].clientX; closeSidebar(); }, {passive:true});
+  el.addEventListener('touchmove', e => {
+    const dx = e.touches[0].clientX - startX;
+    // 向右滑超过30px → 关闭侧边栏 & 阻止iOS退出应用
+    if (dx > 30) { e.preventDefault(); closeSidebar(); }
+    // 向左滑也阻止穿透，避免触发系统返回
+    else if (dx < -5) e.preventDefault();
+  }, {passive:false});
+})();
+
+// 侧边栏手势由原生层处理（MainActivity.onBackPressed）
+
+function loadMemories() {
+  const el = document.getElementById('mlist');
+  fetch('/api/memories', {headers:ah()}).then(r=>r.json()).then(data => {
+    if (!data || !data.length) {
+      el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">暂无记忆</div>';
+      return;
+    }
+    el.innerHTML = data.map(m =>
+      `<div class="memory-item" onclick="viewMemory('${m.date}')">
+        <div class="date">${m.title}</div>
+        <div class="size">${m.size} 字节</div>
+      </div>`
+    ).join('');
+  }).catch(() => {
+    el.innerHTML = '<div style="text-align:center;color:#e55;padding:40px">加载失败</div>';
+  });
+}
+
+function viewMemory(date) {
+  const el = document.getElementById('mlist');
+  el.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">加载中...</div>';
+  fetch(`/api/memories/${date}`, {headers:ah()}).then(r=>r.json()).then(d => {
+    const c = d.content || '';
+    const html = c
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+      .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+      .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>')
+      .replace(/^- (.+)$/gm,'<li>$1</li>')
+      .replace(/\n\n/g,'</p><p style="line-height:1.7;margin:8px 0;">').replace(/\n/g,'<br>');
+    el.innerHTML = `<button class="back-btn" onclick="loadMemories()">← 返回列表</button><div class="memory-content">${html}</div>`;
+  }).catch(() => {
+    el.innerHTML = '<div style="text-align:center;color:#e55;padding:40px">加载失败</div>';
+  });
+}
+// Auto-connect on load
+document.addEventListener('DOMContentLoaded', async () => {
+  loadMemories();
+});
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

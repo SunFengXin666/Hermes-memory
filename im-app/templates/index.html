@@ -12,7 +12,7 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
-<title>友友云盘</title>
+<title>清云</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f5f7;height:100vh;overflow:hidden;color:#1d1d1f}
@@ -218,7 +218,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
     <div class="page active" id="page-chat">
       <div class="chat-area">
         <div class="chat-header" id="chat-header" style="display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer" onclick="switchAiModel()">
-          💬 <span id="ai-name-display">友友</span> <span style="font-size:12px;color:#8e8e93">▾</span>
+          💬 <span id="ai-name-display">清云</span> <span style="font-size:12px;color:#8e8e93">▾</span>
         </div>
         <div class="chat-messages" id="chat-messages">
           <div style="text-align:center;padding:40px 20px;color:#8e8e93;font-size:14px">发送消息开始聊天</div>
@@ -271,7 +271,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
         </div>
         <div class="field" style="margin-top:20px">
           <label style="font-size:14px;font-weight:600;color:#1d1d1f">🤖 AI 模型</label>
-          <p style="font-size:12px;color:#8e8e93;margin-bottom:6px">当前：<span id="setting-ai-name">友友</span></p>
+          <p style="font-size:12px;color:#8e8e93;margin-bottom:6px">当前：<span id="setting-ai-name">清云</span></p>
           <button class="btn-primary" onclick="showAiConfigEditor()" style="background:#f5f5f7;color:#007aff;font-weight:500;border:1px solid #e5e5ea">✎ 管理AI模型</button>
         </div>
         <div class="field" style="margin-top:20px">
@@ -280,7 +280,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
           <textarea id="memory-text" style="width:100%;height:80px;padding:10px 14px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;outline:none;background:#f5f5f7;resize:vertical;font-family:inherit" placeholder="比如：我喜欢Python，养了一只猫叫咪咪..."></textarea>
         </div>
         <div class="info">
-          <strong>友友云盘</strong><br>
+          <strong>清云</strong><br>
           AI 聊天 + 远程文件管理<br>
           服务器：<span id="info-port">8080</span>
         </div>
@@ -365,7 +365,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 <!-- Login Modal -->
 <div class="modal login-modal" id="login-modal">
   <div class="modal-box">
-    <h2>💬 友友云盘</h2>
+    <h2>💬 清云</h2>
     <p>AI 聊天 + 远程文件管理</p>
     <input type="text" id="login-name" placeholder="用户名">
     <input type="password" id="login-password" placeholder="密码">
@@ -381,7 +381,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
   <div class="modal-box" style="max-height:80vh;overflow-y:auto">
     <h3 style="display:flex;align-items:center;justify-content:space-between">
       <span>🤖 AI 模型</span>
-      <span style="font-size:12px;color:#8e8e93;font-weight:400" id="ai-editor-current">当前：友友</span>
+      <span style="font-size:12px;color:#8e8e93;font-weight:400" id="ai-editor-current">当前：清云</span>
     </h3>
     <div id="ai-config-list"></div>
     <button class="btn-primary" onclick="addAiConfig()" style="margin-top:8px;background:#f5f5f7;color:#007aff;font-weight:500;border:1px solid #e5e5ea">+ 添加模型</button>
@@ -1120,7 +1120,7 @@ async function loadAiConfigs() {
 
 function updateAiDisplay() {
   const name = (aiPresets.length > 0 && aiActiveIdx < aiPresets.length)
-    ? aiPresets[aiActiveIdx].name : '友友';
+    ? aiPresets[aiActiveIdx].name : '清云';
   document.getElementById('ai-name-display').textContent = name;
   const se = document.getElementById('setting-ai-name');
   if (se) se.textContent = name;
@@ -1235,7 +1235,7 @@ function showAiConfigEditor() {
 
 function updateAiEditorCurrent() {
   const name = (aiPresets.length > 0 && aiActiveIdx < aiPresets.length)
-    ? aiPresets[aiActiveIdx].name : '友友';
+    ? aiPresets[aiActiveIdx].name : '清云';
   document.getElementById('ai-editor-current').textContent = '当前：' + name;
 }
 

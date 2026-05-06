@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<title>Hermes Web</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f5f5f7;--surface:#fff;--card:#f0f0f0;--text:#1d1d1f;--muted:#8e8e93;--accent:#007aff;--border:#e5e5ea}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+
+/* Layout */
+.app{display:flex;height:100vh}
+.sidebar{width:220px;background:var(--surface);display:flex;flex-direction:column;flex-shrink:0;transition:transform .3s;z-index:100;border-right:1px solid var(--border)}
+.sidebar-header{padding:18px 16px 12px;border-bottom:1px solid var(--border)}
+.sidebar-header h1{font-size:18px;font-weight:600;color:var(--accent)}
+.sidebar-nav{flex:1;overflow-y:auto;padding:8px}
+.sidebar-nav .nav-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;border:none;background:transparent;color:var(--text);font-size:14px;cursor:pointer;border-radius:8px;text-align:left}
+.sidebar-nav .nav-btn svg{flex-shrink:0}
+.sidebar-nav .nav-btn:hover{background:#f0f0f0}
+.sidebar-nav .nav-btn.active{background:#e8f0fe;color:var(--accent);font-weight:500}
+.sidebar-nav .section{margin-top:16px;padding:4px 12px;font-size:11px;color:var(--muted)}
+.chat-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;margin:2px 4px;border-radius:6px;cursor:pointer;font-size:13px}
+.chat-item:hover{background:#f5f5f5}
+.chat-item.active{background:#e8f0fe}
+.chat-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.chat-del{display:none;color:var(--muted);font-size:12px;padding:2px 6px;border-radius:4px}
+.chat-item:hover .chat-del{display:block}
+.chat-del:hover{color:#e55}
+
+/* Main */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--surface)}
+.topbar{display:none;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center;gap:12px;background:var(--surface)}
+.topbar button{background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:4px}
+.topbar h1{font-size:16px;flex:1;font-weight:500}
+.topbar .fr{margin-left:auto}
+
+/* Chat */
+.chat-area{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px;background:#fff}
+.msg{max-width:80%;padding:10px 14px;border-radius:18px;font-size:15px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word;word-break:break-word}
+.msg.user{background:var(--accent);align-self:flex-end;color:#fff;border-bottom-right-radius:6px}
+.msg.assistant{background:var(--card);align-self:flex-start;color:var(--text);border-bottom-left-radius:6px}
+.msg img{max-width:100%;border-radius:12px;display:block;margin:4px 0}
+.msg .loading::after{content:'...';animation:dots 1.5s infinite}
+@keyframes dots{0%,20%{content:'.'}40%{content:'..'}60%,100%{content:'...'}}
+
+/* Image preview above input */
+.img-preview{display:none;align-items:center;gap:8px;padding:8px 16px 0;background:var(--surface)}
+.img-preview.show{display:flex}
+.img-preview img{max-height:80px;border-radius:6px;border:1px solid var(--border)}
+.img-preview .del-img{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;display:flex;align-items:center}
+.img-preview .del-img svg{display:block}
+
+/* Input */
+.input-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;padding-bottom:max(8px,env(safe-area-inset-bottom,8px));border-top:1px solid var(--border);background:var(--surface)}
+.input-bar .img-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:0;line-height:1;display:flex;align-items:center;flex-shrink:0}
+.input-bar .img-btn svg{display:block;width:22px;height:22px}
+.input-bar textarea{flex:1;padding:10px 16px;border:1px solid var(--border);border-radius:20px;outline:none;font-size:15px;background:#f5f5f7;color:var(--text);resize:none;min-height:40px;max-height:100px;font-family:inherit}
+.input-bar textarea:focus{border-color:var(--accent);background:#fff}
+.input-bar button{width:40px;height:40px;padding:0;border:none;border-radius:50%;background:var(--accent);color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.input-bar button:disabled{opacity:.5;cursor:not-allowed}
+.input-bar button svg{display:block}
+
+/* ─── 云盘 ─── */
+.disk-page{flex:1;display:flex;flex-direction:column;background:#fff;min-height:0}
+.disk-header{padding:14px 16px 10px;background:#fff;border-bottom:1px solid var(--border)}
+.disk-server-name{font-size:15px;font-weight:600}
+.disk-add-btn{padding:4px 14px;background:var(--accent);color:#fff;border:none;border-radius:14px;font-size:12px;cursor:pointer}
+.disk-path{font-size:12px;color:var(--muted);margin-top:6px}
+.disk-toolbar{padding:8px 12px;display:flex;gap:6px;background:#fff;border-bottom:1px solid var(--border)}
+.disk-toolbar button{padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:12px;color:var(--accent);white-space:nowrap}
+.disk-toolbar button:active{background:#f5f5f7}
+.disk-files{flex:1;overflow-y:auto;padding:4px 0;background:#fff}
+.disk-file-item{padding:10px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #f2f2f2;cursor:pointer}
+.disk-file-item:active{background:#f5f5f7}
+.disk-file-icon{font-size:18px;width:24px;text-align:center;flex-shrink:0}
+.disk-file-info{flex:1;min-width:0}
+.disk-file-name{font-size:14px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.disk-file-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.disk-empty{padding:60px 16px;text-align:center;color:var(--muted);font-size:14px}
+
+/* ─── Modals ─── */
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);z-index:999;align-items:center;justify-content:center}
+.modal.show{display:flex}
+.modal-box{background:#fff;border-radius:14px;padding:24px;width:300px;max-width:88vw}
+.modal-box h3{font-size:17px;font-weight:600;margin-bottom:16px}
+.modal-box input,.modal-box select{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;outline:none;margin-bottom:10px;background:#f5f5f7}
+.modal-box input:focus{border-color:var(--accent);background:#fff}
+.modal-box label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.modal-box .field{margin-bottom:12px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+.modal-actions button{padding:8px 18px;border-radius:10px;font-size:14px;cursor:pointer;font-weight:500}
+.btn-cancel{background:#f5f5f7;border:none;color:var(--muted)}
+.btn-confirm{background:var(--accent);border:none;color:#fff}
+.upload-picker{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f5f5f7;border-radius:10px;margin-bottom:4px}
+.upload-picker .picker-btn{padding:6px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap}
+.upload-picker .file-name{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upload-progress{margin:12px 0;text-align:center}
+.upload-progress .progress-bar{width:100%;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.upload-progress .progress-fill{width:30%;height:100%;background:var(--accent);border-radius:2px;animation:progress-indeterminate 1.5s ease-in-out infinite}
+@keyframes progress-indeterminate{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
+
+/* Memories Panel */
+.memories-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.3);z-index:200}
+.memories-panel{position:fixed;top:0;right:0;width:420px;max-width:90vw;height:100vh;background:var(--surface);z-index:201;display:flex;flex-direction:column;box-shadow:-4px 0 20px rgba(0,0,0,.1)}
+.memories-panel .header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
+.memories-panel .header h2{font-size:16px;display:flex;align-items:center;gap:6px}
+.memories-panel .header button{background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer}
+.memories-list{flex:1;overflow-y:auto;padding:12px 16px}
+.memory-item{padding:12px 16px;margin-bottom:8px;background:var(--bg);border-radius:8px;cursor:pointer;border:1px solid var(--border)}
+.memory-item:hover{background:#e8f0fe}
+.memory-item .date{font-size:14px;font-weight:500}
+.memory-item .size{font-size:12px;color:var(--muted);margin-top:4px}
+.memory-content{padding:4px 0;line-height:1.7;font-size:14px}
+.memory-content h1{font-size:20px;margin:16px 0 8px}
+.memory-content h2{font-size:17px;margin:14px 0 8px;color:var(--accent)}
+.memory-content h3{font-size:15px;margin:12px 0 6px}
+.memory-content li{margin:4px 0 4px 16px}
+.memory-content strong{color:var(--accent)}
+.back-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:14px;margin-bottom:12px;padding:4px 0}
+
+.sidebar-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;z-index:99}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:300;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+@media(max-width:768px){
+  .sidebar{position:fixed;left:-220px;height:100vh;transition:left .3s}
+  .sidebar.open{left:0}
+  .topbar{display:flex}
+  .memories-panel{width:100vw;max-width:100vw}
+  .msg{max-width:90%}
+  .input-bar{padding-bottom:max(8px,env(safe-area-inset-bottom,8px))}
+}
+
+/* ─── Splash / Loading Screen ─── */
+#splash-overlay{position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(180deg,#d4eaff 0%,#e8f4ff 40%,#f5faff 70%,#fff 100%);transition:opacity .5s ease}
+#splash-overlay.hide{opacity:0;pointer-events:none}
+.splash-bg{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.splash-cloud{position:absolute;font-size:60px;opacity:.2;animation:cloudDrift 8s ease-in-out infinite}
+.cloud-1{top:8%;left:10%;animation-delay:0s}
+.cloud-2{top:20%;right:12%;font-size:80px;animation-delay:-2.5s;opacity:.15}
+.cloud-3{top:35%;left:25%;font-size:50px;animation-delay:-5s;opacity:.12}
+@keyframes cloudDrift{0%,100%{transform:translateX(0)}50%{transform:translateX(30px)}}
+.splash-content{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.splash-logo{margin-bottom:4px}
+.splash-logo svg{display:block}
+.splash-title{font-size:38px;font-weight:700;color:#1d1d1f;letter-spacing:2px}
+.splash-subtitle{font-size:15px;color:#8e8e93;margin-top:-4px}
+.splash-spinner{margin-top:16px;width:36px;height:36px;position:relative}
+.spinner-ring{width:36px;height:36px;border:3px solid #e0e0e0;border-top-color:#007aff;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.splash-status{font-size:13px;color:#8e8e93;margin-top:4px;min-height:20px}
+</style>
+</head>
+<body>
+
+<!-- ─── Splash/Loading Screen ─── -->
+<div id="splash-overlay">
+  <div class="splash-bg">
+    <div class="splash-cloud cloud-1">☁️</div>
+    <div class="splash-cloud cloud-2">☁️</div>
+    <div class="splash-cloud cloud-3">☁️</div>
+  </div>
+  <div class="splash-content">
+    <div class="splash-logo">
+      <svg width="76" height="76" viewBox="0 0 76 76" fill="none">
+        <defs>
+          <filter id="glow"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <path d="M42 6L16 44h16l-8 30 32-38H40l10-30h-8z" fill="#007aff" filter="url(#glow)"/>
+        <path d="M42 6L16 44h16l-8 30 32-38H40l10-30h-8z" fill="#007aff" opacity=".85"/>
+      </svg>
+    </div>
+    <div class="splash-title">清云</div>
+    <div class="splash-subtitle">智能助手 · 你的专属 AI</div>
+    <div class="splash-spinner"><div class="spinner-ring"></div></div>
+    <div class="splash-status" id="splash-status">正在初始化...</div>
+  </div>
+</div>
+
+<div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg> Hermes</h1>
+    </div>
+    <div class="sidebar-nav">
+      <button class="nav-btn active" onclick="newChat()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> 新对话</button>
+      <button class="nav-btn" onclick="openMemories()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> 每日记忆</button>
+      <button class="nav-btn" onclick="switchPage('disk')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg> 云盘</button>
+      <div class="section">对话</div>
+      <div id="chat-list"></div>
+    </div>
+  </div>
+  <div class="sidebar-overlay" onclick="closeSidebar()" style="display:none"></div>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="topbar">
+      <button onclick="toggleSidebar()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+      <h1>Hermes</h1>
+    </div>
+    <div class="chat-area" id="chat-area">
+      <div style="text-align:center;margin:auto;color:var(--muted);padding:40px">
+        <div style="font-size:48px;margin-bottom:16px">⚡</div>
+        <p>开始新对话</p>
+      </div>
+    </div>
+    <!-- Disk Page -->
+    <div class="disk-page" id="disk-page" style="display:none">
+      <div class="disk-header">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="disk-server-name" id="disk-server-name">☁️ 未连接</span>
+          <button class="disk-add-btn" id="disk-connect-btn" onclick="showServerModal()">连接</button>
+        </div>
+        <div class="disk-path" id="current-path">/</div>
+      </div>
+      <div class="disk-toolbar">
+        <button onclick="diskGoBack()">⬆ 上级</button>
+        <button onclick="diskUpload()">⬆ 上传</button>
+        <button onclick="diskMkdir()">📁 新建</button>
+        <button onclick="diskRefresh()">🔄 刷新</button>
+      </div>
+      <div class="disk-files" id="disk-files">
+        <div class="disk-empty">点击「连接」输入服务器信息</div>
+      </div>
+    </div>
+    <!-- Image preview -->
+    <div class="img-preview" id="img-preview">
+      <img id="preview-img" src="">
+      <button class="del-img" onclick="clearImage()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="input-bar">
+      <button class="img-btn" onclick="document.getElementById('file-input').click()" title="上传图片"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></button>
+      <input type="file" id="file-input" accept="image/*" style="display:none" onchange="onImageSelected(event)">
+      <textarea id="input" rows="1" placeholder="输入消息..." onkeydown="if(event.key=='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+      <button id="send-btn" onclick="send()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Server Modal -->
+<div class="modal" id="srv-modal">
+  <div class="modal-box">
+    <h3>连接服务器</h3>
+    <div class="field"><label>主机地址</label><input type="text" id="srv-host" value="81.70.229.222"></div>
+    <div class="field"><label>端口</label><input type="number" id="srv-port" value="22"></div>
+    <div class="field"><label>用户名</label><input type="text" id="srv-user" value="ubuntu"></div>
+    <div class="field"><label>密码</label><input type="password" id="srv-pass" placeholder="密码"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('srv-modal')">取消</button>
+      <button class="btn-confirm" onclick="connectServer()">连接</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal" id="upload-modal">
+  <div class="modal-box">
+    <h3>上传文件</h3>
+    <div class="upload-picker">
+      <button class="picker-btn" onclick="document.getElementById('upload-file').click()">选择文件</button>
+      <span class="file-name" id="upload-file-name">未选择任何文件</span>
+    </div>
+    <input type="file" id="upload-file" style="display:none" onchange="document.getElementById('upload-file-name').textContent=this.files[0]?.name||'未选择任何文件'">
+    <div class="upload-progress" id="upload-progress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+      <div class="progress-text" id="progress-text">正在传输到远程服务器...</div>
+    </div>
+    <div class="modal-actions" id="upload-actions">
+      <button class="btn-cancel" onclick="closeModal('upload-modal')">取消</button>
+      <button class="btn-confirm" onclick="doUpload()">上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mkdir Modal -->
+<div class="modal" id="mkdir-modal">
+  <div class="modal-box">
+    <h3>新建文件夹</h3>
+    <input type="text" id="mkdir-name" placeholder="文件夹名称">
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('mkdir-modal')">取消</button>
+      <button class="btn-confirm" onclick="doMkdir()">创建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Splash Screen Control ───
+(function(){
+  const splash = document.getElementById('splash-overlay');
+  const statusEl = document.getElementById('splash-status');
+  const statusTexts = ['正在初始化...', '加载对话历史...', '连接服务器...', '准备就绪'];
+  let idx = 0;
+  const startTime = Date.now();
+  const MIN_SHOW = 2500; // 至少显示 2.5 秒
+
+  // 逐条切换状态文字
+  const timer = setInterval(() => {
+    idx = Math.min(idx + 1, statusTexts.length - 1);
+    if (statusEl) statusEl.textContent = statusTexts[idx];
+    if (idx >= statusTexts.length - 1) clearInterval(timer);
+  }, 600);
+
+  // 页面完全加载后隐藏 splash
+  function hideSplash() {
+    const elapsed = Date.now() - startTime;
+    const wait = Math.max(0, MIN_SHOW - elapsed);
+    setTimeout(() => {
+      splash.classList.add('hide');
+      setTimeout(() => { splash.style.display = 'none'; }, 600);
+    }, wait);
+  }
+
+  if (document.readyState === 'complete') {
+    hideSplash();
+  } else {
+    window.addEventListener('load', hideSplash);
+  }
+})();
+
+let messages = [];
+let chatHistory = JSON.parse(localStorage.getItem('chats') || '[]');
+let currentChatId = null;
+let currentImage = null; // base64 image data
+
+// ─── 初始化：恢复上次对话 ───
+(function init() {
+  renderChatList();
+  const activeId = localStorage.getItem('activeChat');
+  const chat = activeId ? chatHistory.find(c => c.id === activeId) : null;
+  if (chat) {
+    currentChatId = chat.id;
+    messages = chat.messages;
+    renderMessages();
+    const btn = document.querySelector(`[data-chat="${chat.id}"]`);
+    if (btn) btn.classList.add('active');
+  } else {
+    // 首次加载，新建空白对话
+    messages = [];
+    currentChatId = Date.now().toString();
+    localStorage.setItem('activeChat', currentChatId);
+  }
+})();
+
+// ─── 侧边栏 ───
+function toggleSidebar() {
+  const s = document.getElementById('sidebar');
+  s.classList.toggle('open');
+  document.querySelector('.sidebar-overlay').style.display = s.classList.contains('open') ? 'block' : 'none';
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.querySelector('.sidebar-overlay').style.display = 'none';
+}
+
+// ─── 对话列表 ───
+function renderChatList() {
+  const el = document.getElementById('chat-list');
+  el.innerHTML = chatHistory.toReversed().map(c => {
+    const first = c.messages.find(m=>m.role==='user');
+    const preview = (typeof first?.content === 'string' ? first.content : (first?.content?.[0]?.text || '')).slice(0, 20);
+    return `<div class="chat-item ${c.id===currentChatId?'active':''}" data-chat="${c.id}" onclick="switchChat('${c.id}')">
+      <div class="chat-title">${preview || '新对话'}</div>
+      <div class="chat-del" onclick="event.stopPropagation();deleteChat('${c.id}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+    </div>`;
+  }).join('');
+}
+
+function saveChats() {
+  localStorage.setItem('chats', JSON.stringify(chatHistory));
+  renderChatList();
+}
+
+function addCurrentToHistory() {
+  if (!currentChatId || messages.length === 0) return;
+  const idx = chatHistory.findIndex(c => c.id === currentChatId);
+  const entry = {id: currentChatId, messages: [...messages], time: Date.now()};
+  if (idx >= 0) chatHistory[idx] = entry;
+  else chatHistory.push(entry);
+  saveChats();
+}
+
+function switchChat(id) {
+  const chat = chatHistory.find(c => c.id === id);
+  if (!chat) return;
+  currentChatId = id;
+  messages = [...chat.messages];
+  renderMessages();
+  closeSidebar();
+  renderChatList();
+}
+
+function deleteChat(id) {
+  chatHistory = chatHistory.filter(c => c.id !== id);
+  if (currentChatId === id) {
+    currentChatId = null;
+    messages = [];
+    // 如果删除的是当前对话，开始新对话
+    currentChatId = Date.now().toString();
+    localStorage.setItem('activeChat', currentChatId);
+    document.getElementById('chat-area').innerHTML = '<div style="text-align:center;margin:auto;color:var(--muted);padding:40px"><div style="font-size:48px;margin-bottom:16px">⚡</div><p>开始新对话</p></div>';
+  }
+  saveChats();
+}
+
+// ─── 新对话 ───
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 1500);
+}
+
+function newChat() {
+  addCurrentToHistory();
+  showToast('对话已保存 ✓');
+  messages = [];
+  currentChatId = Date.now().toString();
+  currentImage = null;
+  document.getElementById('img-preview').classList.remove('show');
+  document.getElementById('chat-area').innerHTML = '<div style="text-align:center;margin:auto;color:var(--muted);padding:40px"><div style="font-size:48px;margin-bottom:16px">⚡</div><p>开始新对话</p></div>';
+  document.querySelectorAll('.sidebar-nav button.active').forEach(b => b.classList.remove('active'));
+  const newBtn = document.querySelector('.nav-btn');
+  if (newBtn) newBtn.classList.add('active');
+  closeSidebar();
+  // 保存空对话历史，刷新后保持新对话
+  localStorage.setItem('activeChat', currentChatId);
+}
+
+function renderMessages() {
+  const area = document.getElementById('chat-area');
+  if (messages.length === 0) {
+    area.innerHTML = '<div style="text-align:center;margin:auto;color:var(--muted);padding:40px"><div style="font-size:48px;margin-bottom:16px">⚡</div><p>开始新对话</p></div>';
+    return;
+  }
+  area.innerHTML = '';
+  messages.forEach(m => appendMessage(m.role, m.content));
+}
+
+// ─── 图片上传 ───
+function onImageSelected(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    currentImage = ev.target.result;
+    document.getElementById('preview-img').src = currentImage;
+    document.getElementById('img-preview').classList.add('show');
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+}
+
+function clearImage() {
+  currentImage = null;
+  document.getElementById('img-preview').classList.remove('show');
+}
+
+// ─── 发送消息 ───
+async function send() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text && !currentImage) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  if (!currentChatId) currentChatId = Date.now().toString();
+
+  // Build user message content
+  let content;
+  if (text && currentImage) {
+    content = [
+      {type: 'text', text: text},
+      {type: 'image_url', image_url: {url: currentImage}}
+    ];
+  } else if (currentImage) {
+    content = [
+      {type: 'text', text: '描述这张图片'},
+      {type: 'image_url', image_url: {url: currentImage}}
+    ];
+  } else {
+    content = text;
+  }
+
+  // Display image in user message
+  let displayText = text;
+  let extraHtml = '';
+  if (currentImage) {
+    extraHtml = `<img src="${currentImage}">`;
+    if (!displayText) displayText = '[图片]';
+  }
+
+  messages.push({role:'user', content});
+  appendMessageHtml('user', extraHtml + displayText);
+  clearImage();
+
+  // Show loading
+  const area = document.getElementById('chat-area');
+  const loadingDiv = document.createElement('div');
+  loadingDiv.className = 'msg assistant';
+  loadingDiv.id = 'loading-msg';
+  const span = document.createElement('span');
+  span.className = 'loading';
+  span.textContent = '';
+  loadingDiv.appendChild(span);
+  area.appendChild(loadingDiv);
+  area.scrollTop = area.scrollHeight;
+
+  document.getElementById('send-btn').disabled = true;
+
+  try {
+    const res = await fetch('/api/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({messages})
+    });
+    const data = await res.json();
+    const reply = data.choices?.[0]?.message?.content || data.error || '无响应';
+    messages.push({role:'assistant', content:reply});
+    loadingDiv.remove();
+    appendMessage('assistant', reply);
+    addCurrentToHistory();
+    localStorage.setItem('activeChat', currentChatId);
+  } catch(e) {
+    loadingDiv.remove();
+    appendMessage('assistant', '请求失败: ' + e.message);
+  }
+  document.getElementById('send-btn').disabled = false;
+}
+
+function appendMessage(role, content) {
+  const area = document.getElementById('chat-area');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+}
+
+function appendMessageHtml(role, html) {
+  const area = document.getElementById('chat-area');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = html;
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+}
+
+// ─── 每日记忆 ───
+function openMemories() {
+  closeSidebar();
+  document.querySelectorAll('.memories-overlay,.memories-panel').forEach(el => el.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'memories-overlay';
+  overlay.onclick = () => { overlay.remove(); panel.remove(); };
+  const panel = document.createElement('div');
+  panel.className = 'memories-panel';
+  panel.innerHTML = `
+    <div class="header">
+      <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> 每日记忆</h2>
+      <button onclick="this.closest('.memories-panel').remove();document.querySelector('.memories-overlay').remove();"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="memories-list" id="mlist"><div style="text-align:center;color:var(--muted);padding:40px">加载中...</div></div>`;
+  document.body.appendChild(overlay);
+  document.body.appendChild(panel);
+  fetch('/api/memories').then(r=>r.json()).then(data => {
+    const list = document.getElementById('mlist');
+    if (!list) return;
+    if (!data||!data.length) { list.innerHTML = '<div style="text-align:center;color:var(--muted);padding:40px">暂无记忆</div>'; return; }
+    list.innerHTML = data.map(m => `
+      <div class="memory-item" onclick="loadMemory('${m.date}')">
+        <div class="date">${m.title}</div>
+        <div class="size">${m.size} 字节</div>
+      </div>`).join('');
+  }).catch(() => {
+    const list = document.getElementById('mlist');
+    if (list) list.innerHTML = '<div style="text-align:center;color:#e55;padding:40px">加载失败</div>';
+  });
+}
+
+function loadMemory(date) {
+  fetch(`/api/memories/${date}`).then(r=>r.json()).then(d => {
+    const list = document.getElementById('mlist');
+    if (!list) return;
+    const c = d.content||'';
+    const html = c
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+      .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+      .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+      .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>')
+      .replace(/^- (.+)$/gm,'<li>$1</li>')
+      .replace(/\n\n/g,'</p><p style="line-height:1.7;margin:8px 0;">').replace(/\n/g,'<br>');
+    list.innerHTML = `<button class="back-btn" onclick="openMemories()">← 返回列表</button><div class="memory-content">${html}</div>`;
+  });
+}
+
+// ─── 云盘 ───
+let diskConnId = null;
+let diskPath = '/';
+let diskRoot = null;
+
+function switchPage(name) {
+  if (name === 'disk') {
+    document.getElementById('chat-area').style.display = 'none';
+    document.querySelector('.img-preview').style.display = 'none';
+    document.querySelector('.input-bar').style.display = 'none';
+    document.getElementById('disk-page').style.display = 'flex';
+    // Auto-connect to saved server
+    if (!diskConnId) autoConnect();
+  } else {
+    document.getElementById('chat-area').style.display = 'flex';
+    document.querySelector('.img-preview').style.display = '';
+    document.querySelector('.input-bar').style.display = 'flex';
+    document.getElementById('disk-page').style.display = 'none';
+  }
+  closeSidebar();
+}
+
+function showModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+function showServerModal() { showModal('srv-modal'); }
+
+function autoConnect() {
+  const saved = localStorage.getItem('diskServer');
+  if (!saved) return;
+  try {
+    const cfg = JSON.parse(saved);
+    if (!cfg.host) return;
+    showToast('正在连接 ' + cfg.host + '…');
+    fetch('/api/disk/connect', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({...cfg, root_path: cfg.root_path || undefined})
+    }).then(r=>r.json()).then(data => {
+      if (!data.ok) { showToast('自动连接失败'); return; }
+      diskConnId = data.conn_id;
+      diskRoot = data.root_path || null;
+      const label = diskRoot ? '🔒 ' + cfg.host : '☁️ ' + cfg.host;
+      document.getElementById('disk-server-name').textContent = label;
+      document.getElementById('disk-connect-btn').textContent = '断开';
+      document.getElementById('disk-connect-btn').onclick = disconnectServer;
+      diskPath = diskRoot || '/';
+      diskList(diskPath);
+    }).catch(() => {});
+  } catch(e) {}
+}
+
+function disconnectServer() {
+  if (!diskConnId) return;
+  fetch(`/api/disk/${diskConnId}/disconnect`, { method:'POST' }).catch(()=>{});
+  diskConnId = null;
+  diskRoot = null;
+  diskPath = '/';
+  document.getElementById('disk-server-name').textContent = '☁️ 未连接';
+  document.getElementById('disk-connect-btn').textContent = '连接';
+  document.getElementById('disk-connect-btn').onclick = showServerModal;
+  document.getElementById('current-path').textContent = '/';
+  document.getElementById('disk-files').innerHTML = '<div class="disk-empty">点击「连接」输入服务器信息</div>';
+}
+
+async function connectServer() {
+  const host = document.getElementById('srv-host').value.trim();
+  const port = parseInt(document.getElementById('srv-port').value) || 22;
+  const username = document.getElementById('srv-user').value.trim();
+  const password = document.getElementById('srv-pass').value;
+  // Use saved root_path if available, otherwise use default
+  let rootPath = '/home/ubuntu/113646';
+  try {
+    const saved = JSON.parse(localStorage.getItem('diskServer') || '{}');
+    rootPath = saved.root_path || rootPath;
+  } catch(e) {}
+  if (!host || !username) { showToast('请输入主机地址和用户名'); return; }
+  closeModal('srv-modal');
+  showToast('连接中...');
+  try {
+    const resp = await fetch('/api/disk/connect', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({host, port, username, password, root_path: rootPath || undefined})
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('连接失败: ' + (data.error||'')); return; }
+    diskConnId = data.conn_id;
+    diskRoot = data.root_path || null;
+    const label = diskRoot ? '🔒 ' + host : '☁️ ' + host;
+    document.getElementById('disk-server-name').textContent = label;
+    document.getElementById('disk-connect-btn').textContent = '断开';
+    document.getElementById('disk-connect-btn').onclick = disconnectServer;
+    showToast('已连接 ✓');
+    diskPath = diskRoot || '/';
+    diskList(diskPath);
+    // Save config for auto-connect (preserve root_path)
+    localStorage.setItem('diskServer', JSON.stringify({host, port, username, password, root_path: rootPath || ''}));
+  } catch(e) { showToast('连接失败: ' + e.message); }
+}
+
+async function diskList(path) {
+  if (!diskConnId) return;
+  diskPath = path;
+  document.getElementById('current-path').textContent = path;
+  const el = document.getElementById('disk-files');
+  el.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">加载中...</div>';
+  try {
+    const resp = await fetch(`/api/disk/${diskConnId}/list?path=${encodeURIComponent(path)}`);
+    const data = await resp.json();
+    if (!data.ok) { el.innerHTML = '<div class="disk-empty">' + data.error + '</div>'; return; }
+    if (!data.entries.length) { el.innerHTML = '<div class="disk-empty">空目录</div>'; return; }
+    el.innerHTML = data.entries.map(e => {
+      const icon = e.is_dir ? '📁' : getFileIcon(e.name);
+      const size = e.is_dir ? '' : formatSize(e.size);
+      const mtime = e.mtime ? new Date(e.mtime*1000).toLocaleString() : '';
+      const fullPath = (path === '/' ? '/' : path + '/') + e.name;
+      return `<div class="disk-file-item" onclick="${e.is_dir ? `diskList('${fullPath}')` : `downloadFile('${fullPath}')`}">
+        <div class="disk-file-icon">${icon}</div>
+        <div class="disk-file-info">
+          <div class="disk-file-name">${e.name}</div>
+          <div class="disk-file-meta">${size} ${mtime}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = '<div class="disk-empty">加载失败: ' + e.message + '</div>'; }
+}
+
+function getFileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) return '🖼';
+  if (['mp4','avi','mkv','mov','wmv'].includes(ext)) return '🎬';
+  if (['mp3','wav','flac','aac','ogg'].includes(ext)) return '🎵';
+  if (['zip','rar','7z','tar','gz'].includes(ext)) return '🗜';
+  if (['py','js','html','css','json','xml','md','txt','sh'].includes(ext)) return '📄';
+  if (['pdf'].includes(ext)) return '📕';
+  if (['doc','docx'].includes(ext)) return '📘';
+  if (['xls','xlsx','csv'].includes(ext)) return '📊';
+  return '📄';
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B','KB','MB','GB'];
+  let i = 0;
+  let size = bytes;
+  while (size >= 1024 && i < units.length-1) { size /= 1024; i++; }
+  return size.toFixed(1) + ' ' + units[i];
+}
+
+function diskGoBack() {
+  if (!diskPath || diskPath === '/') return;
+  if (diskRoot && diskPath === diskRoot) { showToast('🔒 已锁定在根路径'); return; }
+  const parent = diskPath.substring(0, diskPath.lastIndexOf('/')) || '/';
+  // Don't go above diskRoot
+  if (diskRoot && !parent.startsWith(diskRoot)) { showToast('🔒 已锁定在根路径'); return; }
+  diskList(parent);
+}
+
+function diskRefresh() { diskList(diskPath); }
+
+function diskUpload() {
+  if (!diskConnId) { showToast('请先连接服务器'); return; }
+  document.getElementById('upload-file-name').textContent = '未选择任何文件';
+  document.getElementById('upload-progress').style.display = 'none';
+  document.getElementById('upload-actions').style.display = '';
+  showModal('upload-modal');
+}
+
+async function doUpload() {
+  const fileInput = document.getElementById('upload-file');
+  const file = fileInput.files[0];
+  if (!file) { showToast('请选择文件'); return; }
+  document.getElementById('upload-actions').style.display = 'none';
+  document.getElementById('upload-progress').style.display = '';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('path', diskPath);
+  try {
+    const resp = await fetch(`/api/disk/${diskConnId}/upload`, { method:'POST', body: formData });
+    const data = await resp.json();
+    if (!data.ok) { showToast('上传失败: ' + (data.error||'')); } else { showToast('上传成功 ✓'); }
+  } catch(e) { showToast('上传失败: ' + e.message); }
+  closeModal('upload-modal');
+  fileInput.value = '';
+  diskList(diskPath);
+}
+
+async function downloadFile(path) {
+  if (!diskConnId) return;
+  try {
+    const resp = await fetch(`/api/disk/${diskConnId}/download?path=${encodeURIComponent(path)}`);
+    const data = await resp.json();
+    if (!data.ok) { showToast('下载失败: ' + (data.error||'')); return; }
+    window.location.href = data.url;
+    showToast('正在下载: ' + data.filename);
+  } catch(e) { showToast('下载失败: ' + e.message); }
+}
+
+function diskMkdir() {
+  if (!diskConnId) { showToast('请先连接服务器'); return; }
+  document.getElementById('mkdir-name').value = '';
+  showModal('mkdir-modal');
+}
+
+async function doMkdir() {
+  const name = document.getElementById('mkdir-name').value.trim();
+  if (!name) { showToast('请输入文件夹名称'); return; }
+  const path = (diskPath === '/' ? '/' : diskPath + '/') + name;
+  closeModal('mkdir-modal');
+  try {
+    const resp = await fetch(`/api/disk/${diskConnId}/mkdir`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path})
+    });
+    const data = await resp.json();
+    if (!data.ok) { showToast('创建失败: ' + (data.error||'')); return; }
+    showToast('创建成功 ✓');
+    diskList(diskPath);
+  } catch(e) { showToast('创建失败: ' + e.message); }
+}
+
+// ─── 自动调整输入框 ───
+document.getElementById('input').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+</script>
+</body>
+</html>

@@ -1,765 +1,550 @@
-import os, json, threading, uuid, base64, queue, time, hashlib, secrets
+from flask import Flask, request, jsonify, send_from_directory, redirect, Response, stream_with_context
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, send_file, send_from_directory, session, make_response, Response
+import requests
+import json
+import os
+import uuid
 import paramiko
-from openai import OpenAI
+import threading
+import sqlite3
+import hashlib
+import secrets
+from datetime import datetime, timedelta
+from functools import wraps
 
-# ─── AI Chat ─────────────────────────────────
-ai_memories: dict[str, list] = {}  # user_id -> message history
-ai_locks: dict[str, threading.Lock] = {}
-ai_configs: dict[str, dict] = {}  # user_id -> {api_key, base_url, model}
+app = Flask(__name__, static_folder='static')
 
-# Read Hermes memory files
-def load_hermes_memories(user_id: str = '') -> str:
-    system_info = '你的名字叫友友，是一个友善耐心的AI助手。用中文回答，简洁但友好。'
-    try:
-        user_md = Path('/root/.hermes/memories/USER.md').read_text(encoding='utf-8')
-        memory_md = Path('/root/.hermes/memories/MEMORY.md').read_text(encoding='utf-8')
-        user_info = user_md.replace('§', '\n').strip()
-        sys_info = memory_md.replace('§', '\n').strip()
-        system_info += f'\n\n关于用户的信息：\n{user_info}\n\n环境信息：\n{sys_info}'
-    except Exception:
-        pass
-    if user_id:
-        mem = load_user_memory(user_id)
-        if mem:
-            system_info += f'\n\n用户 {user_id} 的私人记忆：\n{mem}'
-    return system_info
+APP_VERSION = '1.7.4'
+APK_VERSION = '1.7.4'  # 有新APK时改这个，页面会提示"新版本可下载"
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
-HERMES_SYSTEM_PROMPT = load_hermes_memories()
+DAILY_TOKEN_LIMIT = 5_000_000
 
-app = Flask(__name__)
-app.secret_key = os.urandom(24).hex()
-app.jinja_env.auto_reload = True
+def _is_deepseek(provider):
+    return provider.get('id') == 'deepseek' or provider.get('name', '').lower() == 'deepseek'
 
-UPLOAD_DIR = Path('/tmp/im-app-uploads')
+def _check_token_limit(user_id):
+    path = _user_dir(user_id) / 'token_usage.json'
+    today = datetime.now().strftime('%Y-%m-%d')
+    used = 0
+    if path.exists():
+        data = json.loads(path.read_text())
+        if data.get('date') == today:
+            used = data.get('deepseek_tokens', 0)
+    return used < DAILY_TOKEN_LIMIT, used
+
+def _record_tokens(user_id, provider, count):
+    if not _is_deepseek(provider) or count <= 0:
+        return
+    path = _user_dir(user_id) / 'token_usage.json'
+    today = datetime.now().strftime('%Y-%m-%d')
+    old = {}
+    if path.exists():
+        old = json.loads(path.read_text())
+    data = {'date': today, 'deepseek_tokens': count}
+    if old.get('date') == today:
+        data['deepseek_tokens'] = old.get('deepseek_tokens', 0) + count
+    path.write_text(json.dumps(data))
+
+HERMES_API = 'http://100.107.11.26:8642/v1'
+HERMES_KEY = '44c7cddf60761d694d6c2f424e4a4b4fe9220d26f7327ded'
+MEMORIES_DIR = os.path.expanduser('~/daily-memories')
+UPLOAD_DIR = Path('/tmp/webui-uploads')
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-# Public download directory (served statically)
-DOWNLOAD_DIR = Path('/tmp/im-app-downloads')
+DOWNLOAD_DIR = Path('/tmp/webui-downloads')
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+BASE_DIR = Path('/root/webui')
+DATA_DIR = BASE_DIR / 'data'
 
-# ─── Chat history persistence ─────────────────
-CHAT_DIR = Path('/tmp/im-app-chat-history')
-CHAT_DIR.mkdir(parents=True, exist_ok=True)
-CHAT_LOCK = threading.Lock()
+# ─── Database ───
+DB_PATH = BASE_DIR / 'users.db'
 
-def get_history_path(user_id: str, model_idx: int = 0) -> Path:
-    user_dir = CHAT_DIR / user_id
-    user_dir.mkdir(parents=True, exist_ok=True)
-    return user_dir / f'model_{model_idx}.jsonl'
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def save_message(user_id: str, msg: dict, model_idx: int = 0):
-    file_path = get_history_path(user_id, model_idx)
-    with CHAT_LOCK:
-        try:
-            with open(file_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(msg, ensure_ascii=False) + '\n')
-        except Exception:
-            pass
+def init_db():
+    conn = get_db()
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS auth_tokens (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+    ''')
+    conn.commit()
+    conn.close()
 
-def load_history(user_id: str, model_idx: int = 0) -> list[dict]:
-    file_path = get_history_path(user_id, model_idx)
-    if not file_path.exists():
-        return []
-    with CHAT_LOCK:
-        try:
-            lines = file_path.read_text(encoding='utf-8').strip().split('\n')
-            return [json.loads(l) for l in lines if l.strip()]
-        except Exception:
-            return []
+init_db()
 
-# ─── Per-user memory persistence ─────────────────
-MEMORY_DIR = Path('/tmp/im-app-memories')
-MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-MEMORY_LOCK = threading.Lock()
+# ─── Auth Helpers ───
+def hash_password(password):
+    salt = 'hermes_webui_salt_2026'
+    return hashlib.sha256((password + salt).encode()).hexdigest()
 
-def save_user_memory(user_id: str, text: str):
-    file_path = MEMORY_DIR / f'{user_id}.json'
-    with MEMORY_LOCK:
-        try:
-            file_path.write_text(json.dumps({'user_id': user_id, 'text': text, 'updated_at': time.time()}, ensure_ascii=False), encoding='utf-8')
-        except Exception:
-            pass
+def generate_token():
+    return secrets.token_hex(32)
 
-def load_user_memory(user_id: str) -> str:
-    file_path = MEMORY_DIR / f'{user_id}.json'
-    if not file_path.exists():
-        return ''
-    with MEMORY_LOCK:
-        try:
-            data = json.loads(file_path.read_text(encoding='utf-8'))
-            return data.get('text', '')
-        except Exception:
-            return ''
-
-# ─── User Profile (persistent storage) ────────────
-USER_DIR = Path('/tmp/im-app-users')
-USER_DIR.mkdir(parents=True, exist_ok=True)
-USER_LOCK = threading.Lock()
-
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def load_user_profile(username: str) -> dict:
-    file_path = USER_DIR / f'{username}.json'
-    if not file_path.exists():
+def get_user_by_token(token):
+    if not token:
         return None
-    with USER_LOCK:
-        try:
-            return json.loads(file_path.read_text(encoding='utf-8'))
-        except Exception:
-            return None
+    conn = get_db()
+    row = conn.execute(
+        'SELECT u.id, u.username FROM auth_tokens t JOIN users u ON t.user_id = u.id WHERE t.token = ?',
+        [token]
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
-def save_user_profile(username: str, profile: dict):
-    file_path = USER_DIR / f'{username}.json'
-    with USER_LOCK:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(profile, f, ensure_ascii=False, indent=2)
+def require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        user = get_user_by_token(token)
+        if not user:
+            return jsonify({'error': '未登录'}), 401
+        return f(user, *args, **kwargs)
+    return decorated
 
-def profile_to_ai_config(profile: dict) -> dict:
-    return {
-        'presets': profile.get('ai_presets', []),
-        'active': profile.get('ai_active', 0),
-    }
+def _user_dir(user_id):
+    # Get username from DB for folder name
+    conn = get_db()
+    row = conn.execute('SELECT username FROM users WHERE id = ?', [user_id]).fetchone()
+    conn.close()
+    username = row['username'] if row else user_id
+    d = DATA_DIR / username
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
+# ─── Per-User Provider Storage ───
+def _load_providers(user_id):
+    path = _user_dir(user_id) / 'providers.json'
+    if not path.exists():
+        # Seed defaults for new user
+        defaults = [
+            {'id': 'deepseek', 'name': 'DeepSeek', 'base_url': 'https://api.deepseek.com/v1', 'api_key': 'sk-1935b91149a345a1b1fbcb8bf7f2c614', 'models': ['deepseek-chat', 'deepseek-v4-flash']},
+        ]
+        _save_providers(user_id, defaults)
+        return defaults
+    return json.loads(path.read_text())
+
+def _save_providers(user_id, providers):
+    path = _user_dir(user_id) / 'providers.json'
+    path.write_text(json.dumps(providers, ensure_ascii=False, indent=2))
+
+# ─── Auth API ───
 @app.route('/api/auth/register', methods=['POST'])
-def auth_register():
+def register():
     data = request.json
-    username = data.get('username', '').strip()
-    password = data.get('password', '')
-    if not username or not password:
-        return jsonify({'ok': False, 'error': '用户名和密码不能为空'}), 400
-    if len(username) < 2:
-        return jsonify({'ok': False, 'error': '用户名至少2个字符'}), 400
-    if len(password) < 4:
-        return jsonify({'ok': False, 'error': '密码至少4个字符'}), 400
-    if load_user_profile(username):
-        return jsonify({'ok': False, 'error': '用户名已存在'}), 400
-    profile = {
-        'password_hash': hash_password(password),
-        'ai_presets': [],
-        'ai_active': 0,
-        'servers': [],
-        'memory': '',
-        'created_at': time.time(),
-    }
-    save_user_profile(username, profile)
-    return jsonify({'ok': True})
+    username = (data.get('username') or '').strip()
+    password = (data.get('password') or '').strip()
+    if len(username) < 2 or len(password) < 4:
+        return jsonify({'ok': False, 'error': '用户名至少2个字符，密码至少4个字符'}), 400
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM users WHERE username = ?', [username]).fetchone()
+    if existing:
+        conn.close()
+        return jsonify({'ok': False, 'error': '用户名已被注册'}), 400
+    user_id = uuid.uuid4().hex[:8]
+    conn.execute('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)',
+                 [user_id, username, hash_password(password)])
+    conn.commit()
+    conn.close()
+    # 新用户自动创建远程目录
+    try:
+        remote_user = 'ubuntu'
+        remote_pass = 'SunFengXin521?'
+        remote_host = '81.70.229.222'
+        remote_port = 22
+        remote_base = '/home/ubuntu/113646'
+        remote_dir = f'{remote_base}/{username}'
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(remote_host, port=remote_port, username=remote_user, password=remote_pass, timeout=15, banner_timeout=8, auth_timeout=10)
+        sftp = client.open_sftp()
+        try:
+            sftp.stat(remote_dir)
+        except:
+            sftp.mkdir(remote_dir)
+        sftp.close()
+        client.close()
+        # 保存 dysk 配置
+        disk_cfg = {
+            'host': remote_host,
+            'port': remote_port,
+            'username': remote_user,
+            'password': remote_pass,
+            'root_path': remote_dir
+        }
+        d = _user_dir(user_id)
+        (d / 'disk_config.json').write_text(json.dumps(disk_cfg, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f'[register] 创建用户目录失败: {e}')
+    return jsonify({'ok': True, 'message': '注册成功'})
 
 @app.route('/api/auth/login', methods=['POST'])
-def auth_login():
+def login():
     data = request.json
-    username = data.get('username', '').strip()
-    password = data.get('password', '')
-    if not username or not password:
-        return jsonify({'ok': False, 'error': '用户名和密码不能为空'}), 400
-    profile = load_user_profile(username)
-    if not profile:
-        return jsonify({'ok': False, 'error': '用户不存在'}), 400
-    if profile.get('password_hash') != hash_password(password):
-        return jsonify({'ok': False, 'error': '密码错误'}), 400
-    # Generate session token
-    token = secrets.token_hex(32)
-    profile['token'] = token
-    save_user_profile(username, profile)
-    # Load profile into memory
-    ai_configs[username] = profile_to_ai_config(profile)
-    return jsonify({
-        'ok': True,
-        'token': token,
-        'profile': {
-            'ai_presets': profile.get('ai_presets', []),
-            'ai_active': profile.get('ai_active', 0),
-            'servers': profile.get('servers', []),
-            'memory': profile.get('memory', ''),
-        }
-    })
+    username = (data.get('username') or '').strip()
+    password = (data.get('password') or '').strip()
+    conn = get_db()
+    user = conn.execute('SELECT id, username FROM users WHERE username = ? AND password_hash = ?',
+                        [username, hash_password(password)]).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'ok': False, 'error': '用户名或密码错误'}), 401
+    token = generate_token()
+    conn.execute('INSERT INTO auth_tokens (token, user_id) VALUES (?, ?)', [token, user['id']])
+    # Clean old tokens (>30 days)
+    conn.execute("DELETE FROM auth_tokens WHERE created_at < datetime('now', '-30 days')")
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'token': token, 'username': user['username']})
 
-@app.route('/api/auth/token_login', methods=['POST'])
-def auth_token_login():
-    data = request.json
-    username = data.get('username', '').strip()
-    token = data.get('token', '')
-    if not username or not token:
-        return jsonify({'ok': False, 'error': '参数不全'}), 400
-    profile = load_user_profile(username)
-    if not profile:
-        return jsonify({'ok': False, 'error': '用户不存在'}), 400
-    if profile.get('token') != token:
-        return jsonify({'ok': False, 'error': 'token无效'}), 400
-    ai_configs[username] = profile_to_ai_config(profile)
-    return jsonify({
-        'ok': True,
-        'profile': {
-            'ai_presets': profile.get('ai_presets', []),
-            'ai_active': profile.get('ai_active', 0),
-            'servers': profile.get('servers', []),
-            'memory': profile.get('memory', ''),
-        }
-    })
-
-# ─── Chat: SSE instead of WebSocket ─────────────────
-# Each user has a list of per-SSE-connection queues
-user_queues: dict[str, list[queue.Queue]] = {}
-user_queues_lock = threading.Lock()
-# Online users set
-online_users: set[str] = set()
-online_lock = threading.Lock()
-
-def push_to_user(user_id: str, msg: dict):
-    with user_queues_lock:
-        qs = user_queues.get(user_id, [])
-    payload = json.dumps(msg, ensure_ascii=False)
-    for q in qs:
-        q.put(payload)
-
-@app.route('/')
-def index():
-    resp = make_response(render_template('index.html'))
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-@app.route('/api/chat/login', methods=['POST'])
-def chat_login():
-    data = request.json
-    user_id = data.get('user_id', '').strip()
-    if not user_id:
-        return jsonify({'ok': False, 'error': '缺少用户ID'}), 400
-    with online_lock:
-        was_offline = user_id not in online_users
-        online_users.add(user_id)
-        users_snapshot = list(online_users)
-    with user_queues_lock:
-        user_queues.setdefault(user_id, [])
-    if was_offline:
-        notify_all({'type': 'user_online', 'user_id': user_id}, exclude=user_id)
-    push_to_user(user_id, {'type': 'user_list', 'users': users_snapshot})
-    active_idx = ai_configs.get(user_id, {}).get('active', 0)
-    history = load_history(user_id, active_idx)
-    return jsonify({'ok': True, 'users': users_snapshot, 'history': history, 'active_idx': active_idx})
-
-@app.route('/api/chat/config', methods=['GET', 'POST'])
-def chat_config():
-    """GET → 获取当前用户的AI配置, POST → 设置AI配置"""
-    user_id = request.json.get('user_id', '') if request.method == 'POST' else request.args.get('user_id', '')
-    if not user_id:
-        return jsonify({'ok': False, 'error': '缺少user_id'}), 400
-    if request.method == 'POST':
-        data = request.json
-        # configs is an array of {name, api_key, base_url, model}
-        ai_configs[user_id] = {
-            'presets': data.get('presets', []),
-            'active': data.get('active', 0),
-        }
-        # Persist to user profile
-        profile = load_user_profile(user_id)
-        if profile:
-            profile['ai_presets'] = data.get('presets', [])
-            profile['ai_active'] = data.get('active', 0)
-            save_user_profile(user_id, profile)
-        return jsonify({'ok': True})
-    else:
-        cfg = ai_configs.get(user_id, {'presets': [], 'active': 0})
-        return jsonify({'ok': True, 'presets': cfg.get('presets', []), 'active': cfg.get('active', 0)})
-
-@app.route('/api/chat/memory', methods=['GET', 'POST'])
-def chat_memory():
-    """GET → 获取用户的记忆, POST → 保存记忆"""
-    user_id = request.json.get('user_id', '') if request.method == 'POST' else request.args.get('user_id', '')
-    if not user_id:
-        return jsonify({'ok': False, 'error': '缺少user_id'}), 400
-    if request.method == 'POST':
-        text = request.json.get('text', '')
-        save_user_memory(user_id, text)
-        return jsonify({'ok': True})
-    else:
-        text = load_user_memory(user_id)
-        return jsonify({'ok': True, 'text': text})
-
-@app.route('/api/chat/send', methods=['POST'])
-def chat_send():
-    data = request.json
-    user_id = data.get('user_id', '')
-    text = data.get('text', '').strip()
-    if not user_id or not text:
-        return jsonify({'ok': False, 'error': '参数不全'}), 400
-    active_idx = ai_configs.get(user_id, {}).get('active', 0)
-    push_to_user(user_id, {
-        'type': 'message', 'from': user_id, 'text': text,
-        'time': data.get('time', ''), 'isSelf': True, 'model_idx': active_idx,
-    })
-    save_message(user_id, {
-        'from': user_id, 'text': text,
-        'time': data.get('time', ''), 'isSelf': True,
-    }, active_idx)
-    threading.Thread(target=call_ai, args=(user_id, text), daemon=True).start()
+@app.route('/api/auth/logout', methods=['POST'])
+@require_auth
+def logout(user):
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    conn = get_db()
+    conn.execute('DELETE FROM auth_tokens WHERE token = ?', [token])
+    conn.commit()
+    conn.close()
     return jsonify({'ok': True})
 
-def get_ai_config(user_id: str):
-    """获取用户当前激活的AI配置，没有配置则用默认值"""
-    cfg = ai_configs.get(user_id, {})
-    presets = cfg.get('presets', [])
-    active_idx = cfg.get('active', 0)
-    if presets and active_idx < len(presets):
-        p = presets[active_idx]
-        return {
-            'api_key': p.get('api_key', ''),
-            'base_url': p.get('base_url', 'http://localhost:8642/v1'),
-            'model': p.get('model', 'deepseek-v4-flash'),
-            'name': p.get('name', 'AI'),
-        }
-    # Default fallback
-    return {
-        'api_key': '44c7cddf60761d694d6c2f424e4a4b4fe9220d26f7327ded',
-        'base_url': 'http://localhost:8642/v1',
-        'model': 'deepseek-v4-flash',
-        'name': '友友',
-    }
+@app.route('/api/auth/check', methods=['GET'])
+def auth_check():
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    user = get_user_by_token(token)
+    if user:
+        return jsonify({'ok': True, 'username': user['username']})
+    return jsonify({'ok': False}), 401
 
-@app.route('/api/chat/completion', methods=['POST'])
-def chat_completion():
-    """同步AI接口：POST {"user_id":"xxx","text":"你好"} → {"ok":true,"reply":"..."}"""
+# ─── Providers API (per-user) ───
+@app.route('/api/providers', methods=['GET'])
+@require_auth
+def list_providers(user):
+    return jsonify(_load_providers(user['id']))
+
+@app.route('/api/providers', methods=['POST'])
+@require_auth
+def add_provider(user):
     data = request.json
-    user_id = data.get('user_id', '')
-    text = data.get('text', '').strip()
-    if not user_id or not text:
-        return jsonify({'ok': False, 'error': '参数不全'}), 400
+    if not data.get('name') or not data.get('base_url') or not data.get('api_key'):
+        return jsonify({'ok': False, 'error': '名称、接口地址、API Key 不能为空'}), 400
+    providers = _load_providers(user['id'])
+    new_id = uuid.uuid4().hex[:8]
+    entry = {
+        'id': new_id,
+        'name': data['name'],
+        'base_url': data['base_url'].rstrip('/'),
+        'api_key': data['api_key'],
+        'models': data.get('models', [data.get('name')]),
+    }
+    providers.append(entry)
+    _save_providers(user['id'], providers)
+    return jsonify({'ok': True, 'provider': entry})
+
+@app.route('/api/providers/<provider_id>', methods=['DELETE'])
+@require_auth
+def delete_provider(user, provider_id):
+    providers = _load_providers(user['id'])
+    providers = [p for p in providers if p['id'] != provider_id]
+    _save_providers(user['id'], providers)
+    return jsonify({'ok': True})
+
+@app.route('/api/providers/<provider_id>', methods=['PUT'])
+@require_auth
+def update_provider(user, provider_id):
+    data = request.json
+    providers = _load_providers(user['id'])
+    for p in providers:
+        if p['id'] == provider_id:
+            if 'name' in data: p['name'] = data['name']
+            if 'base_url' in data: p['base_url'] = data['base_url'].rstrip('/')
+            if 'api_key' in data: p['api_key'] = data['api_key']
+            if 'models' in data: p['models'] = data['models']
+            _save_providers(user['id'], providers)
+            return jsonify({'ok': True, 'provider': p})
+    return jsonify({'ok': False, 'error': '未找到'}), 404
+
+# ─── Chat API (per-user) ───
+def _find_model_provider(providers, model_name):
+    for p in providers:
+        if model_name in p.get('models', []):
+            return p, model_name
+        if model_name.startswith(p.get('name', '').lower()):
+            return p, model_name
+    return None, None
+
+@app.route('/api/chat', methods=['POST'])
+@require_auth
+def chat(user):
+    data = request.json
+    model = data.get('model', 'hermes-agent')
+    stream = data.get('stream', False)
+    providers = _load_providers(user['id'])
+    provider, actual_model = _find_model_provider(providers, model)
+    if not provider:
+        return jsonify({'error': f'未找到模型 {model} 的提供商，请先在模型页配置 API Key', 'ok': False}), 400
+    if not provider.get('api_key'):
+        return jsonify({'error': f'提供商 "{provider["name"]}" 未配置 API Key，请先在模型页配置', 'ok': False}), 400
+
+    # ─── Daily token limit (DeepSeek only) ───
+    if _is_deepseek(provider):
+        allowed, used = _check_token_limit(user['id'])
+        if not allowed:
+            return jsonify({
+                'error': f'今日 DeepSeek 额度已用尽（{used:,}/{DAILY_TOKEN_LIMIT:,} tokens），明天再试',
+                'ok': False
+            }), 429
+
     try:
-        active_idx = ai_configs.get(user_id, {}).get('active', 0)
-        mem_key = f"{user_id}:{active_idx}"
-        lock_key = f"{user_id}:{active_idx}"
-        if lock_key not in ai_locks:
-            ai_locks[lock_key] = threading.Lock()
-        with ai_locks[lock_key]:
-            if mem_key not in ai_memories:
-                system_prompt = load_hermes_memories(user_id)
-                ai_memories[mem_key] = [{'role': 'system', 'content': system_prompt}]
-            ai_memories[mem_key].append({'role': 'user', 'content': text})
-            if len(ai_memories[mem_key]) > 21:
-                ai_memories[mem_key] = [ai_memories[mem_key][0]] + ai_memories[mem_key][-20:]
-            cfg = get_ai_config(user_id)
-            client = OpenAI(api_key=cfg['api_key'], base_url=cfg['base_url'])
-            resp = client.chat.completions.create(
-                model=cfg['model'],
-                messages=ai_memories[mem_key],
-                timeout=60,
-            )
-            reply = resp.choices[0].message.content
-            ai_memories[mem_key].append({'role': 'assistant', 'content': reply})
-        save_message(user_id, {'from': user_id, 'text': text, 'time': '', 'isSelf': True}, active_idx)
-        save_message(user_id, {'from': 'AI', 'text': reply, 'time': '', 'isSelf': False}, active_idx)
-        push_to_user(user_id, {'type': 'message', 'from': user_id, 'text': text, 'time': '', 'isSelf': True, 'model_idx': active_idx})
-        push_to_user(user_id, {'type': 'message', 'from': 'AI', 'text': reply, 'time': '', 'isSelf': False, 'model_idx': active_idx})
-        return jsonify({'ok': True, 'reply': reply})
+        def sanitize_msgs(msgs):
+            out = []
+            for m in msgs:
+                if isinstance(m.get('content'), list):
+                    texts = [p.get('text','') for p in m['content'] if p.get('type') == 'text']
+                    out.append({**m, 'content': texts[0] if texts else '[图片]'})
+                else:
+                    out.append(m)
+            return out
+        
+        raw = data.get('messages', [])
+        
+        if stream:
+            # Streaming mode — strip images proactively (can't retry mid-stream)
+            clean = sanitize_msgs(raw)
+            prov_resp = requests.post(f"{provider['base_url']}/chat/completions",
+                json={'model': actual_model or model, 'messages': clean, 'stream': True},
+                headers={'Authorization': 'Bearer ' + provider['api_key'], 'Content-Type': 'application/json'},
+                stream=True, timeout=120)
+            
+            if prov_resp.status_code >= 400:
+                result = prov_resp.json()
+                err_body = result.get('error', result)
+                err_msg = err_body.get('message', str(err_body)) if isinstance(err_body, dict) else str(err_body)
+                if isinstance(err_body, dict) and err_body.get('metadata', {}).get('raw'):
+                    err_msg += ' (' + err_body['metadata']['raw'] + ')'
+                return jsonify({'error': err_msg, 'ok': False}), prov_resp.status_code
+            
+            def generate():
+                content_chars = 0
+                for line in prov_resp.iter_lines():
+                    if line:
+                        decoded = line.decode('utf-8') if isinstance(line, bytes) else line
+                        if decoded.startswith('data: ') and decoded != 'data: [DONE]':
+                            try:
+                                chunk = json.loads(decoded[6:])
+                                for c in chunk.get('choices', []):
+                                    content = c.get('delta', {}).get('content', '')
+                                    content_chars += len(content)
+                            except:
+                                pass
+                        yield decoded + '\n'
+                if _is_deepseek(provider) and content_chars > 0:
+                    _record_tokens(user['id'], provider, max(content_chars // 2, 1))
+            return Response(stream_with_context(generate()),
+                          mimetype='text/event-stream',
+                          headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+        
+        # Non-streaming mode
+        resp = requests.post(f"{provider['base_url']}/chat/completions", json={
+                'model': actual_model or model,
+                'messages': raw,
+                'stream': False
+            }, headers={'Authorization': 'Bearer ' + provider['api_key'], 'Content-Type': 'application/json'}, timeout=120)
+        result = resp.json()
+        # If it failed due to content format (image_url not supported), retry text-only
+        if resp.status_code >= 400:
+            err_msg = ''
+            err_body = result.get('error', result)
+            if isinstance(err_body, dict):
+                err_msg = err_body.get('message', str(err_body))
+            else:
+                err_msg = str(err_body)
+            if 'image_url' in err_msg.lower() or 'variant' in err_msg.lower() or 'deserialize' in err_msg.lower() or 'image' in err_msg.lower() or 'vision' in err_msg.lower():
+                resp = requests.post(f"{provider['base_url']}/chat/completions", json={
+                    'model': actual_model or model,
+                    'messages': sanitize_msgs(raw),
+                    'stream': False
+                }, headers={'Authorization': 'Bearer ' + provider['api_key'], 'Content-Type': 'application/json'}, timeout=120)
+                result = resp.json()
+        if resp.status_code >= 400:
+            err_body = result.get('error', result)
+            err_msg = err_body.get('message', str(err_body)) if isinstance(err_body, dict) else str(err_body)
+            # 如果有更详细的原始错误信息，追加到提示中
+            if isinstance(err_body, dict) and err_body.get('metadata', {}).get('raw'):
+                err_msg += ' (' + err_body['metadata']['raw'] + ')'
+            return jsonify({'error': err_msg, 'ok': False}), resp.status_code
+        # Record tokens for non-streaming
+        if _is_deepseek(provider):
+            usage = result.get('usage', {})
+            total = usage.get('total_tokens', 0) or usage.get('completion_tokens', 0)
+            if total:
+                _record_tokens(user['id'], provider, total)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/models', methods=['GET'])
+@require_auth
+def models(user):
+    all_models = []
+    try:
+        resp = requests.get(f'{HERMES_API}/models', headers={'Authorization': f'Bearer {HERMES_KEY}'}, timeout=10)
+        all_models = resp.json().get('data', [])
+    except:
+        pass
+    providers = _load_providers(user['id'])
+    existing_ids = {m['id'] for m in all_models}
+    for p in providers:
+        for m in p.get('models', []):
+            if m not in existing_ids:
+                all_models.append({'id': m, 'object': 'model', 'owned_by': p['name']})
+                existing_ids.add(m)
+    return jsonify({'data': all_models, 'object': 'list'})
+
+# ─── Per-User Chat Storage ───
+@app.route('/api/chats', methods=['GET'])
+@require_auth
+def get_chats(user):
+    path = _user_dir(user['id']) / 'chats.json'
+    if not path.exists():
+        return jsonify([])
+    return jsonify(json.loads(path.read_text()))
+
+@app.route('/api/chats', methods=['PUT'])
+@require_auth
+def save_chats(user):
+    path = _user_dir(user['id']) / 'chats.json'
+    path.write_text(json.dumps(request.json, ensure_ascii=False, indent=2))
+    return jsonify({'ok': True})
+
+# ─── Per-User Sync to GitHub ───
+@app.route('/api/sync', methods=['POST'])
+@require_auth
+def sync_user_data(user):
+    """Push this user's data to GitHub"""
+    import subprocess
+    try:
+        sync_dir = os.path.expanduser('/root/hermes-memory-backup/users')
+        user_dir = os.path.join(sync_dir, user['username'])
+        os.makedirs(user_dir, exist_ok=True)
+        # Copy user files
+        for f in [f'chats_{user["id"]}.json', f'providers_{user["id"]}.json']:
+            src = BASE_DIR / f
+            if src.exists():
+                dest = os.path.join(user_dir, f.replace(f'_{user["id"]}', ''))
+                import shutil
+                shutil.copy2(str(src), dest)
+        # Git commit & push
+        result = subprocess.run(
+            ['bash', '/root/hermes-memory-backup/sync.sh'],
+            capture_output=True, text=True, timeout=60
+        )
+        return jsonify({'ok': True, 'output': result.stdout[-500:]})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
-# ─── Cloud Disk Tools (for AI function calling) ─────
-CLOUD_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_files",
-            "description": "列出云盘目录下的文件和文件夹",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "目录路径，默认为云盘根目录",
-                        "default": "/home/ubuntu/yunpan"
-                    }
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_text_file",
-            "description": "读取云盘上的文本文件内容（支持txt、json、md、py、log等文本格式）",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "文件的完整路径"}
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_item",
-            "description": "删除云盘上的文件或空目录",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "要删除的文件或目录路径"}
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_directory",
-            "description": "在云盘上创建新目录",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "要创建的目录路径"}
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_disk_usage",
-            "description": "获取云盘的磁盘使用情况（总空间、已用、剩余）",
-            "parameters": {"type": "object", "properties": {}}
-        }
-    },
-]
-
-def execute_cloud_tool(user_id: str, func_name: str, args: dict) -> dict:
-    """Execute a cloud disk tool for the given user"""
-    # Find the user's active connection
-    conn_info = None
-    for cid, conn in list(sftp_connections.items()):
-        if conn['info'].get('user_id') == user_id:
-            conn_info = conn['info']
-            break
-    if not conn_info:
-        return {"error": "你没有连接的云盘服务器，请先在云盘页面连接服务器"}
-    
-    try:
-        # Fresh connection for each operation
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(conn_info['host'], port=int(conn_info.get('port', 22)),
-            username=conn_info['username'], password=conn_info.get('password', ''), timeout=15)
-        sftp = client.open_sftp()
-        
-        result = {}
-        if func_name == 'list_files':
-            path = args.get('path', '/home/ubuntu/yunpan')
-            items = sftp.listdir_attr(path)
-            entries = []
-            for item in items:
-                entries.append({
-                    'name': item.filename,
-                    'size': item.st_size,
-                    'mtime': item.st_mtime,
-                    'is_dir': bool(item.st_mode & 0o40000),
-                })
-            entries.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
-            result = {'files': entries, 'path': path, 'count': len(entries)}
-        
-        elif func_name == 'read_text_file':
-            path = args['path']
-            with sftp.open(path, 'r') as f:
-                content = f.read()
-            # Try to decode
-            try:
-                text = content.decode('utf-8')
-            except:
-                text = content.decode('utf-8', errors='replace')
-            result = {'path': path, 'content': text, 'size': len(text)}
-        
-        elif func_name == 'delete_item':
-            path = args['path']
-            try:
-                sftp.rmdir(path)
-                result = {'deleted': path, 'type': 'directory'}
-            except:
-                sftp.remove(path)
-                result = {'deleted': path, 'type': 'file'}
-        
-        elif func_name == 'create_directory':
-            path = args['path']
-            sftp.mkdir(path)
-            result = {'created': path}
-        
-        elif func_name == 'get_disk_usage':
-            QUOTA = 20 * 1024 * 1024 * 1024  # 20GB
-            stdin, stdout, stderr = client.exec_command(f"du -sb {conn_info.get('base_path', '/home/ubuntu/yunpan')} | cut -f1")
-            output = stdout.read().decode().strip()
-            used = int(output) if output else 0
-            free = max(0, QUOTA - used)
-            result = {
-                'total_bytes': QUOTA,
-                'used_bytes': used,
-                'free_bytes': free,
-                'total_gb': 20.0,
-                'used_gb': round(used / 1073741824, 2),
-                'free_gb': round(free / 1073741824, 2),
-                'used_percent': round(used / QUOTA * 100, 1) if QUOTA > 0 else 0,
-            }
-        elif func_name == 'get_disk_usage_error':
-            result = {'error': '无法获取磁盘信息'}
-        
-        sftp.close()
-        client.close()
-        return result
-    except Exception as e:
-        return {'error': str(e)}
-
-def call_ai(user_id: str, text: str):
-    try:
-        print(f"[AI] 收到消息 from {user_id}: {text[:50]}")
-        active_idx = ai_configs.get(user_id, {}).get('active', 0)
-        mem_key = f"{user_id}:{active_idx}"
-        lock_key = f"{user_id}:{active_idx}"
-        if lock_key not in ai_locks:
-            ai_locks[lock_key] = threading.Lock()
-        with ai_locks[lock_key]:
-            if mem_key not in ai_memories:
-                system_prompt = load_hermes_memories(user_id)
-                system_prompt += '\n\n你具备云盘控制能力，可以列出文件、读取文本文件、删除文件、创建目录、查看磁盘空间。'
-                ai_memories[mem_key] = [
-                    {'role': 'system', 'content': system_prompt},
-                ]
-            ai_memories[mem_key].append({'role': 'user', 'content': text})
-            if len(ai_memories[mem_key]) > 21:
-                ai_memories[mem_key] = [ai_memories[mem_key][0]] + ai_memories[mem_key][-20:]
-            cfg = get_ai_config(user_id)
-            print(f"[AI] 调用API: {cfg['model']} @ {cfg['base_url']}")
-            client = OpenAI(api_key=cfg['api_key'], base_url=cfg['base_url'])
-            resp = client.chat.completions.create(
-                model=cfg['model'],
-                messages=ai_memories[mem_key],
-                tools=CLOUD_TOOLS,
-                tool_choice="auto",
-                timeout=30,
-            )
-            # Handle tool calls loop
-            tool_calls_used = False
-            while resp.choices[0].finish_reason == "tool_calls":
-                tool_calls_used = True
-                msg = resp.choices[0].message
-                ai_memories[mem_key].append({
-                    'role': 'assistant',
-                    'content': msg.content or '',
-                    'tool_calls': [{
-                        'id': tc.id,
-                        'type': 'function',
-                        'function': {'name': tc.function.name, 'arguments': tc.function.arguments}
-                    } for tc in msg.tool_calls]
-                })
-                for tc in msg.tool_calls:
-                    func_name = tc.function.name
-                    try:
-                        args = json.loads(tc.function.arguments)
-                    except:
-                        args = {}
-                    print(f"[AI] 执行云盘工具: {func_name}({args})")
-                    result = execute_cloud_tool(user_id, func_name, args)
-                    ai_memories[mem_key].append({
-                        'role': 'tool',
-                        'tool_call_id': tc.id,
-                        'content': json.dumps(result, ensure_ascii=False)
-                    })
-                resp = client.chat.completions.create(
-                    model=cfg['model'],
-                    messages=ai_memories[mem_key],
-                    tools=CLOUD_TOOLS,
-                    tool_choice="auto",
-                    timeout=30,
-                )
-            reply = resp.choices[0].message.content
-            if not reply and tool_calls_used:
-                reply = '✅ 操作已完成。'
-            ai_memories[mem_key].append({'role': 'assistant', 'content': reply})
-            print(f"[AI] 回复成功: {reply[:50]}...")
-    except Exception as e:
-        reply = f'⚠️ AI出错了: {str(e)}'
-        print(f"[AI] 错误: {e}")
-    push_to_user(user_id, {
-        'type': 'message', 'from': 'AI', 'text': reply,
-        'time': '', 'isSelf': False, 'model_idx': active_idx,
-    })
-    save_message(user_id, {
-        'from': 'AI', 'text': reply,
-        'time': '', 'isSelf': False,
-    }, active_idx)
-    print(f"[AI] 已推送到 {user_id}")
-
-@app.route('/api/chat/events')
-def chat_events():
-    user_id = request.args.get('user_id', '')
-    if not user_id:
-        return jsonify({'ok': False, 'error': '缺少user_id'}), 400
-    q = queue.Queue()
-    with user_queues_lock:
-        user_queues.setdefault(user_id, []).append(q)
-    def generate():
-        try:
-            while True:
-                try:
-                    msg = q.get(timeout=30)
-                    yield f'data: {msg}\n\n'
-                except queue.Empty:
-                    yield ': keepalive\n\n'
-        finally:
-            with user_queues_lock:
-                qs = user_queues.get(user_id, [])
-                if q in qs:
-                    qs.remove(q)
-    return Response(generate(), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive',
-                             'Access-Control-Allow-Origin': '*'})
-
-@app.route('/api/chat/history', methods=['GET'])
-def chat_history():
-    user_id = request.args.get('user_id', '')
-    model_idx = int(request.args.get('model_idx', 0))
-    history = load_history(user_id, model_idx)
-    return jsonify({'ok': True, 'history': history})
-
-# ─── Vision: Image recognition via MiMo ────────────────
-VISION_API_KEY = 'tp-cr3x7h17d0ss3kupmhid5jhcngsdk4gg75k3yve2jnby218r'
-VISION_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1'
-VISION_MODEL = 'mimo-v2-omni'
-
-@app.route('/api/chat/vision', methods=['POST'])
-def chat_vision():
-    user_id = request.form.get('user_id', '')
-    file = request.files.get('image')
-    if not user_id or not file:
-        return jsonify({'ok': False, 'error': '参数不全'}), 400
-    # Save image to temp
-    img_path = UPLOAD_DIR / f"vision_{uuid.uuid4().hex[:12]}_{file.filename}"
-    file.save(str(img_path))
-    try:
-        with open(img_path, 'rb') as f:
-            b64 = base64.b64encode(f.read()).decode()
-        ext = os.path.splitext(file.filename)[1].lower() or '.png'
-        mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png' if ext == '.png' else 'image/gif' if ext == '.gif' else 'image/webp'
-        data_url = f'data:{mime};base64,{b64}'
-        client = OpenAI(api_key=VISION_API_KEY, base_url=VISION_BASE_URL)
-        resp = client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=[{
-                'role': 'user',
-                'content': [
-                    {'type': 'text', 'text': '请详细描述这张图片的内容'},
-                    {'type': 'image_url', 'image_url': {'url': data_url}},
-                ]
-            }],
-            max_tokens=500,
-            timeout=30,
-        )
-        reply = resp.choices[0].message.content or '（无法识别）'
-        # Save to chat history
-        active_idx = ai_configs.get(user_id, {}).get('active', 0)
-        save_message(user_id, {'from': user_id, 'text': f'📷 [图片] {file.filename}', 'time': '', 'isSelf': True}, active_idx)
-        save_message(user_id, {'from': 'AI', 'text': f'🖼 图片分析结果：\n{reply}', 'time': '', 'isSelf': False}, active_idx)
-        # Push to SSE
-        push_to_user(user_id, {'type': 'message', 'from': user_id, 'text': f'📷 [图片] {file.filename}', 'time': '', 'isSelf': True, 'model_idx': active_idx})
-        push_to_user(user_id, {'type': 'message', 'from': 'AI', 'text': f'🖼 图片分析结果：\n{reply}', 'time': '', 'isSelf': False, 'model_idx': active_idx})
-        img_path.unlink(missing_ok=True)
-        return jsonify({'ok': True, 'reply': reply})
-    except Exception as e:
-        img_path.unlink(missing_ok=True)
-        return jsonify({'ok': False, 'error': f'图片识别失败: {str(e)}'}), 500
-
-@app.route('/api/user/profile', methods=['POST'])
-def user_profile():
-    """Save user profile (servers, memory)"""
-    data = request.json
-    user_id = data.get('user_id', '')
-    if not user_id:
-        return jsonify({'ok': False, 'error': '缺少user_id'}), 400
-    profile = load_user_profile(user_id)
-    if not profile:
-        return jsonify({'ok': False, 'error': '用户不存在'}), 400
-    if 'servers' in data:
-        profile['servers'] = data['servers']
-    if 'memory' in data:
-        profile['memory'] = data['memory']
-    save_user_profile(user_id, profile)
-    return jsonify({'ok': True})
-
-def notify_all(msg: dict, exclude: str = None):
-    payload = json.dumps(msg, ensure_ascii=False)
-    with user_queues_lock:
-        for uid, qs in user_queues.items():
-            if uid != exclude:
-                for q in qs:
-                    q.put(payload)
-
-@app.route('/api/chat/logout', methods=['POST'])
-def chat_logout():
-    user_id = request.json.get('user_id', '')
-    if user_id:
-        with online_lock:
-            online_users.discard(user_id)
-        with user_queues_lock:
-            user_queues.pop(user_id, None)
-        notify_all({'type': 'user_offline', 'user_id': user_id})
-    return jsonify({'ok': True})
-
-# ─── Cloud Disk: SFTP connections ────────────────────────────
+# ─── SFTP Connection Pool ───
 sftp_connections: dict[str, dict] = {}
+sftp_lock = threading.Lock()
 
-@app.route('/api/disks/connect', methods=['POST'])
-def disk_connect():
-    data = request.json
-    host = data['host']
-    port = int(data.get('port', 22))
-    username = data['username']
-    password = data.get('password', '')
-    key_file = data.get('key_file', '')
-    user_id = data.get('user_id', '')
-    
-    # Disconnect existing connection to same server/user
-    for cid, conn in list(sftp_connections.items()):
-        if conn['info'].get('host') == host and conn['info'].get('port') == port and conn['info'].get('username') == username:
-            try: conn['sftp'].close()
-            except: pass
-            try: conn['client'].close()
-            except: pass
-            del sftp_connections[cid]
-    
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    try:
-        if key_file:
-            key = paramiko.RSAKey.from_private_key_file(key_file)
-            client.connect(host, port=port, username=username, pkey=key, timeout=10)
-        else:
-            client.connect(host, port=port, username=username, password=password, timeout=10)
-        # Keepalive to prevent connection from being dropped
-        client.get_transport().set_keepalive(15)
-        sftp = client.open_sftp()
-        conn_id = str(uuid.uuid4())[:8]
-        data['user_id'] = user_id
-        sftp_connections[conn_id] = {'client': client, 'sftp': sftp, 'info': data}
-        return jsonify({'ok': True, 'conn_id': conn_id, 'host': host})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 400
+def _get_conn(conn_id):
+    with sftp_lock:
+        return sftp_connections.get(conn_id)
 
-@app.route('/api/disks/<conn_id>/list', methods=['GET'])
-def disk_list(conn_id):
-    path = request.args.get('path', '/')
-    conn = sftp_connections.get(conn_id)
+def _fresh_sftp(conn_id):
+    conn = _get_conn(conn_id)
     if not conn:
-        return jsonify({'ok': False, 'error': '连接已断开'}), 404
-    info = conn.get('info', {})
+        return None, None, '连接已断开'
+    # Try existing connection first
     try:
-        # Fresh connection for each list
+        client = conn['client']
+        transport = client.get_transport()
+        if transport and transport.is_active():
+            sftp = conn['sftp']
+            sftp.stat('/')  # Quick liveness check
+            return client, sftp, None
+    except:
+        pass
+    # Reconnect
+    info = conn['info']
+    try:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         client.connect(info['host'], port=int(info.get('port', 22)),
-            username=info['username'], password=info.get('password', ''), timeout=15)
+            username=info['username'], password=info.get('password', ''),
+            timeout=15, banner_timeout=8, auth_timeout=10)
+        client.get_transport().set_keepalive(15)
         sftp = client.open_sftp()
+        # Update connection
+        conn['client'] = client
+        conn['sftp'] = sftp
+        return client, sftp, None
+    except Exception as e:
+        return None, None, str(e)
+
+@app.route('/api/disk/connect', methods=['POST'])
+@require_auth
+def disk_connect(user):
+    data = request.json
+    host = data.get('host', '')
+    port = int(data.get('port', 22))
+    username = data.get('username', '')
+    password = data.get('password', '')
+    root_path = data.get('root_path', '').strip()
+    if not host or not username:
+        return jsonify({'ok': False, 'error': '缺少主机地址或用户名'}), 400
+    if root_path:
+        root_path = '/' + root_path.lstrip('/').rstrip('/')
+    with sftp_lock:
+        for cid, conn in list(sftp_connections.items()):
+            info = conn.get('info', {})
+            if info.get('host') == host and info.get('username') == username:
+                try: conn['sftp'].close()
+                except: pass
+                try: conn['client'].close()
+                except: pass
+                del sftp_connections[cid]
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(host, port=port, username=username, password=password, timeout=15, banner_timeout=8, auth_timeout=10)
+        client.get_transport().set_keepalive(15)
+        sftp = client.open_sftp()
+        if root_path:
+            parts = root_path.strip('/').split('/')
+            cur = ''
+            for p in parts:
+                cur += '/' + p
+                try: sftp.stat(cur)
+                except: sftp.mkdir(cur)
+        conn_id = uuid.uuid4().hex[:8]
+        with sftp_lock:
+            sftp_connections[conn_id] = {
+                'client': client, 'sftp': sftp,
+                'info': {'host': host, 'port': port, 'username': username, 'password': password, 'root_path': root_path}
+            }
+        return jsonify({'ok': True, 'conn_id': conn_id, 'host': host, 'username': username, 'root_path': root_path})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+@app.route('/api/disk/<conn_id>/list', methods=['GET'])
+def disk_list(conn_id):
+    path = request.args.get('path', '/')
+    client, sftp, err = _fresh_sftp(conn_id)
+    if err:
+        return jsonify({'ok': False, 'error': err}), 404
+    try:
         items = sftp.listdir_attr(path)
         entries = []
         for item in items:
@@ -770,108 +555,104 @@ def disk_list(conn_id):
                 'is_dir': item.st_mode is not None and (item.st_mode & 0o40000) != 0,
             })
         entries.sort(key=lambda x: (not x['is_dir'], x['name'].lower()))
-        sftp.close()
-        client.close()
         return jsonify({'ok': True, 'entries': entries, 'path': path})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
+    finally:
+        try: sftp.close()
+        except: pass
+        try: client.close()
+        except: pass
 
-@app.route('/api/disks/<conn_id>/download', methods=['GET'])
-def disk_download(conn_id):
-    conn = sftp_connections.get(conn_id)
-    if not conn:
-        return jsonify({'ok': False, 'error': '连接已断开'}), 404
-    path = request.args.get('path', '')
-    info = conn.get('info', {})
-    try:
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(info['host'], port=int(info.get('port', 22)),
-            username=info['username'], password=info.get('password', ''), timeout=15)
-        sftp = client.open_sftp()
-        filename = os.path.basename(path)
-        local_path = DOWNLOAD_DIR / f"{uuid.uuid4().hex[:8]}_{filename}"
-        sftp.get(path, str(local_path))
-        sftp.close()
-        client.close()
-        download_url = f'/dl/{local_path.name}'
-        return jsonify({'ok': True, 'url': download_url, 'filename': filename})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 400
-
-# Serve downloaded files
-@app.route('/dl/<path:filename>')
-def serve_download(filename):
-    return send_from_directory(str(DOWNLOAD_DIR), filename, as_attachment=True)
-
-@app.route('/api/disks/<conn_id>/upload', methods=['POST'])
+@app.route('/api/disk/<conn_id>/upload', methods=['POST'])
 def disk_upload(conn_id):
-    conn = sftp_connections.get(conn_id)
-    if not conn:
-        return jsonify({'ok': False, 'error': '连接已断开'}), 404
     dest_dir = request.form.get('path', '/')
     file = request.files.get('file')
     if not file:
         return jsonify({'ok': False, 'error': '没有文件'}), 400
+    conn = _get_conn(conn_id)
+    if not conn:
+        return jsonify({'ok': False, 'error': '连接已断开'}), 404
+    info = conn['info']
+    local_tmp = UPLOAD_DIR / f'ul_{uuid.uuid4().hex[:12]}_{file.filename}'
+    file.save(str(local_tmp))
     try:
-        local_tmp = UPLOAD_DIR / f"ul_{uuid.uuid4().hex[:12]}_{file.filename}"
-        file.save(str(local_tmp))
-        print(f"[UPLOAD] Saved locally: {local_tmp}")
-        # Fresh connection, synchronous upload
-        info = conn.get('info', {})
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        print(f"[UPLOAD] Connecting to {info.get('host')}...")
         client.connect(info['host'], port=int(info.get('port', 22)),
             username=info['username'], password=info.get('password', ''), timeout=30)
         sftp = client.open_sftp()
         remote_path = os.path.join(dest_dir, file.filename).replace('\\', '/')
-        print(f"[UPLOAD] Putting {local_tmp} -> {remote_path}...")
         sftp.put(str(local_tmp), remote_path)
         sftp.close()
         client.close()
         local_tmp.unlink(missing_ok=True)
-        print(f"[UPLOAD] Done: {file.filename}")
         return jsonify({'ok': True})
     except Exception as e:
-        print(f"[UPLOAD] Error: {e}")
         return jsonify({'ok': False, 'error': str(e)}), 400
 
-@app.route('/api/disks/<conn_id>/delete', methods=['POST'])
-def disk_delete(conn_id):
-    conn = sftp_connections.get(conn_id)
+@app.route('/api/disk/<conn_id>/download', methods=['GET'])
+def disk_download(conn_id):
+    path = request.args.get('path', '')
+    conn = _get_conn(conn_id)
     if not conn:
         return jsonify({'ok': False, 'error': '连接已断开'}), 404
-    path = request.json.get('path', '')
-    info = conn.get('info', {})
+    info = conn['info']
     try:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         client.connect(info['host'], port=int(info.get('port', 22)),
-            username=info['username'], password=info.get('password', ''), timeout=15)
+            username=info['username'], password=info.get('password', ''),
+            timeout=15, banner_timeout=8, auth_timeout=10)
         sftp = client.open_sftp()
-        try:
-            sftp.rmdir(path)
-        except:
-            sftp.remove(path)
+        filename = os.path.basename(path)
+        local_path = DOWNLOAD_DIR / f'{uuid.uuid4().hex[:8]}_{filename}'
+        sftp.get(path, str(local_path))
+        sftp.close()
+        client.close()
+        return jsonify({'ok': True, 'url': f'/dl/{local_path.name}', 'filename': filename})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+@app.route('/dl/<path:filename>')
+def serve_download(filename):
+    return send_from_directory(str(DOWNLOAD_DIR), filename, as_attachment=True)
+
+@app.route('/api/disk/<conn_id>/delete', methods=['POST'])
+def disk_delete(conn_id):
+    path = request.json.get('path', '')
+    conn = _get_conn(conn_id)
+    if not conn:
+        return jsonify({'ok': False, 'error': '连接已断开'}), 404
+    info = conn['info']
+    try:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(info['host'], port=int(info.get('port', 22)),
+            username=info['username'], password=info.get('password', ''),
+            timeout=15, banner_timeout=8, auth_timeout=10)
+        sftp = client.open_sftp()
+        try: sftp.rmdir(path)
+        except: sftp.remove(path)
         sftp.close()
         client.close()
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
 
-@app.route('/api/disks/<conn_id>/mkdir', methods=['POST'])
+@app.route('/api/disk/<conn_id>/mkdir', methods=['POST'])
 def disk_mkdir(conn_id):
-    conn = sftp_connections.get(conn_id)
+    path = request.json.get('path', '')
+    conn = _get_conn(conn_id)
     if not conn:
         return jsonify({'ok': False, 'error': '连接已断开'}), 404
-    path = request.json.get('path', '')
-    info = conn.get('info', {})
+    info = conn['info']
     try:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         client.connect(info['host'], port=int(info.get('port', 22)),
-            username=info['username'], password=info.get('password', ''), timeout=15)
+            username=info['username'], password=info.get('password', ''),
+            timeout=15, banner_timeout=8, auth_timeout=10)
         sftp = client.open_sftp()
         sftp.mkdir(path)
         sftp.close()
@@ -880,167 +661,109 @@ def disk_mkdir(conn_id):
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
 
-@app.route('/api/disks/<conn_id>/usage', methods=['GET'])
-def disk_usage(conn_id):
-    QUOTA = 20 * 1024 * 1024 * 1024  # 20GB
-    conn = sftp_connections.get(conn_id)
-    if not conn:
-        return jsonify({'ok': False, 'error': '连接已断开'}), 404
-    info = conn.get('info', {})
-    try:
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(info['host'], port=int(info.get('port', 22)),
-            username=info['username'], password=info.get('password', ''), timeout=15)
-        stdin, stdout, stderr = client.exec_command("du -sb /home/ubuntu/yunpan | cut -f1")
-        output = stdout.read().decode().strip()
-        client.close()
-        used = int(output) if output else 0
-        free = max(0, QUOTA - used)
-        return jsonify({'ok': True, 'total': QUOTA, 'used': used, 'free': free})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 400
-
-# ─── File Preview (Word, Excel, PPT, Images) ────────────────
-PREVIEWABLE_IMAGES = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'}
-PREVIEWABLE_TEXT = {'.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.log', '.sh', '.bat', '.csv', '.env', '.sql', '.r', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.ts', '.jsx', '.tsx', '.vue', '.svelte', '.rb', '.php', '.pl', '.lua', '.tex'}
-
-@app.route('/api/disks/<conn_id>/preview', methods=['GET'])
-def disk_preview(conn_id):
-    conn = sftp_connections.get(conn_id)
-    if not conn:
-        return jsonify({'ok': False, 'error': '连接已断开'}), 404
-    path = request.args.get('path', '')
-    if not path:
-        return jsonify({'ok': False, 'error': '缺少路径'}), 400
-    info = conn.get('info', {})
-    ext = os.path.splitext(path)[1].lower()
-    filename = os.path.basename(path)
-    try:
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(info['host'], port=int(info.get('port', 22)),
-            username=info['username'], password=info.get('password', ''), timeout=15)
-        sftp = client.open_sftp()
-        result = {}
-        try:
-            # ── Images ──
-            if ext in PREVIEWABLE_IMAGES:
-                with sftp.open(path, 'rb') as f:
-                    raw = f.read()
-                mime_map = {
-                    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-                    '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
-                    '.svg': 'image/svg+xml',
-                }
-                mime = mime_map.get(ext, 'image/png')
-                b64 = base64.b64encode(raw).decode('utf-8')
-                result = {'ok': True, 'type': 'image', 'data': f'data:{mime};base64,{b64}', 'filename': filename, 'size': len(raw)}
-
-            # ── Word ──
-            elif ext == '.docx':
-                import io
-                with sftp.open(path, 'rb') as f:
-                    raw = f.read()
-                from docx import Document
-                doc = Document(io.BytesIO(raw))
-                paragraphs = [p.text for p in doc.paragraphs]
-                # Also get tables
-                tables = []
-                for table in doc.tables:
-                    rows = []
-                    for row in table.rows:
-                        rows.append([cell.text for cell in row.cells])
-                    tables.append(rows)
-                text = '\n'.join(paragraphs)
-                result = {'ok': True, 'type': 'word', 'text': text, 'tables': tables, 'filename': filename, 'size': len(raw)}
-
-            # ── Excel ──
-            elif ext in ('.xlsx', '.xls'):
-                import io
-                with sftp.open(path, 'rb') as f:
-                    raw = f.read()
-                from openpyxl import load_workbook
-                wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-                sheets = []
-                for sheet_name in wb.sheetnames:
-                    ws = wb[sheet_name]
-                    rows_data = []
-                    for row in ws.iter_rows(values_only=True):
-                        rows_data.append([str(c) if c is not None else '' for c in row])
-                    sheets.append({'name': sheet_name, 'rows': rows_data})
-                wb.close()
-                result = {'ok': True, 'type': 'excel', 'sheets': sheets, 'filename': filename, 'size': len(raw)}
-
-            # ── PPT ──
-            elif ext == '.pptx':
-                import io
-                with sftp.open(path, 'rb') as f:
-                    raw = f.read()
-                from pptx import Presentation
-                prs = Presentation(io.BytesIO(raw))
-                slides = []
-                for slide in prs.slides:
-                    slide_texts = []
-                    for shape in slide.shapes:
-                        if shape.has_text_frame:
-                            for para in shape.text_frame.paragraphs:
-                                t = para.text.strip()
-                                if t:
-                                    slide_texts.append(t)
-                        if shape.has_table:
-                            table = shape.table
-                            for row in table.rows:
-                                slide_texts.append(' | '.join(cell.text for cell in row.cells))
-                    slides.append(slide_texts)
-                result = {'ok': True, 'type': 'ppt', 'slides': slides, 'filename': filename, 'size': len(raw)}
-
-            # ── PDF ──
-            elif ext == '.pdf':
-                with sftp.open(path, 'rb') as f:
-                    raw = f.read()
-                local_pdf = DOWNLOAD_DIR / f"preview_{uuid.uuid4().hex[:8]}_{filename}"
-                local_pdf.write_bytes(raw)
-                result = {'ok': True, 'type': 'pdf', 'url': f'/dl/{local_pdf.name}', 'filename': filename, 'size': len(raw)}
-
-            # ── Text files ──
-            elif ext in PREVIEWABLE_TEXT:
-                with sftp.open(path, 'r') as f:
-                    content = f.read(200000)  # max 200KB
-                result = {'ok': True, 'type': 'text', 'content': content, 'filename': filename, 'size': len(content)}
-
-            else:
-                # Fallback: try to read as text
-                try:
-                    with sftp.open(path, 'r') as f:
-                        content = f.read(50000)
-                    result = {'ok': True, 'type': 'text', 'content': content, 'filename': filename, 'size': len(content)}
-                except:
-                    result = {'ok': False, 'error': f'不支持预览 {ext} 格式文件，请下载后查看'}
-
-        finally:
-            sftp.close()
-            client.close()
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'ok': False, 'error': f'预览失败: {str(e)}'}), 400
-
-@app.route('/api/disks/disconnect', methods=['POST'])
-def disk_disconnect():
-    conn_id = request.json.get('conn_id', '')
-    conn = sftp_connections.pop(conn_id, None)
+@app.route('/api/disk/<conn_id>/disconnect', methods=['POST'])
+def disk_disconnect(conn_id):
+    with sftp_lock:
+        conn = sftp_connections.pop(conn_id, None)
     if conn:
         try: conn['sftp'].close()
         except: pass
         try: conn['client'].close()
         except: pass
+
+@app.route('/api/disk/config', methods=['GET'])
+@require_auth
+def disk_config(user):
+    path = _user_dir(user['id']) / 'disk_config.json'
+    if path.exists():
+        return jsonify(json.loads(path.read_text()))
+    return jsonify({})
+
     return jsonify({'ok': True})
 
+# ─── 每日记忆 API ───
+@app.route('/api/memories', methods=['GET'])
+@require_auth
+def list_memories(user):
+    Path(MEMORIES_DIR).mkdir(parents=True, exist_ok=True)
+    files = []
+    for f in sorted(Path(MEMORIES_DIR).glob('*.md'), reverse=True):
+        try:
+            dt = datetime.strptime(f.stem, '%Y-%m-%d')
+            title = f'{dt.year}年{dt.month}月{dt.day}日'
+        except:
+            title = f.stem
+        files.append({'date': f.stem, 'title': title, 'size': f.stat().st_size})
+    return jsonify(files)
+
+@app.route('/api/memories/<date>', methods=['GET'])
+@require_auth
+def get_memory(user, date):
+    path = Path(MEMORIES_DIR) / f'{date}.md'
+    if not path.exists():
+        return jsonify({'error': 'not found'}), 404
+    return jsonify({'date': date, 'content': path.read_text(encoding='utf-8')})
+
+@app.route('/api/memories/today', methods=['GET'])
+@require_auth
+def today_memory(user):
+    today = datetime.now().strftime('%Y-%m-%d')
+    path = Path(MEMORIES_DIR) / f'{today}.md'
+    exists = path.exists()
+    return jsonify({'date': today, 'exists': exists, 'content': path.read_text(encoding='utf-8') if exists else ''})
+
+# ─── 页面路由 ───
+def serve_page(page):
+    path = BASE_DIR / 'templates' / page
+    with open(str(path), 'r', encoding='utf-8') as f:
+        content = f.read()
+    resp = Response(content, mimetype='text/html; charset=utf-8')
+    mtime = path.stat().st_mtime
+    resp.headers['Last-Modified'] = datetime.utcfromtimestamp(mtime).strftime('%a, %d %b %Y %H:%M:%S GMT')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
+
+@app.route('/')
+def chat_page():
+    return serve_page('chat.html')
+
+@app.route('/disk')
+def disk_page():
+    return serve_page('disk.html')
+
+@app.route('/memories')
+def memories_page():
+    return serve_page('memories.html')
+
+@app.route('/models')
+def models_page():
+    return serve_page('models.html')
+
+@app.route('/settings')
+def settings_page():
+    return serve_page('settings.html')
+
+@app.route('/login')
+def login_page():
+    return send_from_directory('templates', 'login.html')
+
+@app.route('/api/version')
+def api_version():
+    return jsonify({'version': APP_VERSION, 'latest_version': APK_VERSION, 'apk_url': '/api/download-apk'})
+
+@app.route('/api/download-apk')
+def download_apk():
+    return send_from_directory('static', 'qingyun.apk', mimetype='application/vnd.android.package-archive', as_attachment=True, download_name='qingyun.apk')
+
+@app.route('/api/token/usage', methods=['GET'])
+@require_auth
+def token_usage(user):
+    _, used = _check_token_limit(user['id'])
+    return jsonify({'date': datetime.now().strftime('%Y-%m-%d'), 'used': used, 'limit': DAILY_TOKEN_LIMIT})
+
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='IM+Cloud Disk App')
-    parser.add_argument('--host', default='0.0.0.0', help='监听地址')
-    parser.add_argument('--port', type=int, default=5000, help='监听端口')
-    args = parser.parse_args()
-    print(f"🚀 IM+Cloud Disk App 启动: http://{args.host}:{args.port}")
-    app.run(host=args.host, port=args.port, debug=False, threaded=True)
+    try:
+        from waitress import serve
+        serve(app, host='0.0.0.0', port=8080, threads=8, send_bytes=65536)
+    except ImportError:
+        app.run(host='0.0.0.0', port=8080, debug=True)
