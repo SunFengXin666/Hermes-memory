@@ -16,3 +16,91 @@ Server only 3.6GB RAM — memory is #1 bottleneck. Chrome renderer processes acc
 每日记忆: 仅23:59 cron自动生成每日总结（会话记录不逐条存）。Cron job "3bdc54905c93" 每晚23:59用session_search抓全天对话→写~/daily-memories/YYYY-MM-DD.md→推GitHub。WebUI不写记忆文件。
 §
 服务器 81.70.229.222 密码 SunFengXin521?（用户 ubuntu）。SSH/SFTP 端口 22。云盘已集成到 /root/webui/ WebUI 中。
+---
+
+## mihomo（Clash Meta）代理配置经验总结
+
+### 背景
+主服务器 49.232.224.90 在大陆（墙内），需要通过代理访问外网。
+
+### 为什么用 mihomo
+- 原版 Clash 不支持 VLESS reality 协议
+- mihomo（MetaCubeX/Clash.Meta）支持 reality，能完整伪造目标网站 TLS 指纹
+- 安装：下载 release，chmod +x，mv 到 /usr/local/bin/mihomo
+
+### 核心经验
+
+**1. 订阅链接是 base64 编码的 URI**
+```
+echo "base64字符串" | base64 -d
+```
+解码后才是真实节点配置。参数（UUID、pub key、short ID）全部从解码后的 URI 提取，不要手动填写。
+
+**2. VLESS reality 关键参数（容易填错）**
+| 参数 | 说明 | 正确示例 |
+|------|------|---------|
+| public key | base64 解码后 32 字节 | okMflU6BFXrrv8dyyRjAXyFsD5FhOjju6avLRoDwmTM（43位base64）|
+| short ID | 十六进制字符串 | 3d5743d52b5b6701 |
+| server | 填节点域名，不是目标域名 | v3.cdn.0y6hzhd2pd.yafdns.net |
+| server name | 填目标网站域名（用于 TLS 伪造） | www.microsoft.com |
+
+**3. 踩坑记录**
+- hysteria2 的 QUIC 握手在大陆被阻断（`context deadline exceeded`），国内不要用
+- server 填 www.microsoft.com 会解析到大陆 CDN（61.147.219.124），导致连接失败
+- 出口 IP：188.253.124.94（新加坡）
+
+**4. git push 在代理下超时**
+git-remote-https 连接 github.com:443 成功，但 push 时卡住。用 GitHub API 替代：
+```bash
+# 获取 SHA
+GET https://api.github.com/repos/{owner}/{repo}/contents/{path}
+# 更新
+PUT https://api.github.com/repos/{owner}/{repo}/contents/{path}
+```
+
+**5. GeoLite2 MMDB 在大陆无法下载**
+服务器访问不了 github.com/maxmind，直接从其他镜像站下载或跳过（规则不依赖 geoip-match 时不影响）。
+
+### mihomo 关键配置项
+```yaml
+mixed-port: 7890
+allow-lan: true
+bind-address: 0.0.0.0
+log-level: info
+external-controller: 0.0.0.0:9090
+
+proxies:
+  - name: "v3-cdn"
+    type: vless
+    server: v3.cdn.0y6hzhd2pd.yafdns.net
+    port: 25111
+    uuid: [REDACTED]
+    flow: xtls-rprx-vision
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: okMflU6BFXrrv8dyyRjAXyFsD5FhOjju6avLRoDwmTM
+      short-id: 3d5743d52b5b6701
+    servername: www.microsoft.com
+
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - v3-cdn
+
+rules:
+  - MATCH,Proxy
+```
+
+### 验证命令
+```bash
+# 代理端口测试
+curl --proxy http://127.0.0.1:7890 http://httpbin.org/ip
+curl --proxy socks5://127.0.0.1:7891 http://httpbin.org/ip
+
+# 查看出口 IP
+curl --proxy http://127.0.0.1:7890 ifconfig.me
+
+# 查看日志
+sudo journalctl -u mihomo --no-pager -f
+```
